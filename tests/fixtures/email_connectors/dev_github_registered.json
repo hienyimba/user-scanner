@@ -1,0 +1,1 @@
+{"connector":"GithubEmailConnector.php","category":"dev","status":409,"body":"email already in use","json":{"email_taken":true},"expected":"registered"}
