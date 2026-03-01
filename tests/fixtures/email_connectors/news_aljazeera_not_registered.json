@@ -1,0 +1,1 @@
+{"connector":"AljazeeraEmailConnector.php","category":"news","status":200,"body":"subscribe to newsletter","json":{"subscriber":false},"expected":"not_registered"}

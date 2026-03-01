@@ -57,6 +57,11 @@ pip install user-scanner
 
 See [Important flags](docs/FLAGS.md) here and use the tool powerfully
 
+### Web Platform Roadmap
+
+See the Laravel + Tailwind web application PRD at [docs/WEB_APP_PRD.md](docs/WEB_APP_PRD.md).
+
+A Phase A Laravel foundation scaffold is available under [webapp/](webapp/README.md).
 
 ## Usage
 

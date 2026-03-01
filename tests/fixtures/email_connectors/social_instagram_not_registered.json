@@ -1,0 +1,1 @@
+{"connector":"InstagramEmailConnector.php","category":"social","status":404,"body":"create instagram account","json":{"email_is_available":true},"expected":"not_registered"}
