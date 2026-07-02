@@ -1,0 +1,86 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services\Scanner\Validators\Generated\Email;
+
+use App\DTO\ScanResult;
+use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
+
+final class CourseraValidator extends BaseGeneratedValidator
+{
+    public function key(): string
+    {
+        return 'coursera';
+    }
+
+    public function category(): string
+    {
+        return 'learning';
+    }
+
+    public function mode(): string
+    {
+        return 'email';
+    }
+
+    public function siteName(): string
+    {
+        return 'Coursera';
+    }
+
+    public function siteUrl(): string
+    {
+        return 'https://coursera.org';
+    }
+
+    public function check(string $target, array $options = []): ScanResult
+    {
+        try {
+            $request = Http::timeout(6)->withOptions([
+                'verify' => (bool) config('scanner.verify_ssl', false),
+            ])->withHeaders([
+                'User-Agent' => 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Mobile Safari/537.36',
+                'Accept' => 'application/json',
+                'X-Requested-With' => 'XMLHttpRequest',
+                'X-Coursera-Application' => 'front-page',
+                'Origin' => 'https://www.coursera.org',
+                'Referer' => 'https://www.coursera.org/?authMode=signup',
+                'Accept-Encoding' => 'identity',
+            ]);
+
+            if (!empty($options['proxy'])) {
+                $request = $request->withOptions(['proxy' => $options['proxy']]);
+            }
+
+            $response = $request->post('https://www.coursera.org/api/userAccounts.v1?action=getLoginMethods&email=' . urlencode($target), []);
+            $data = $response->json();
+
+            if (!is_array($data) || !array_key_exists('loginMethods', $data)) {
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', "Missing 'loginMethods' in response, report it on github", mode: $this->mode(), key: $this->key());
+            }
+
+            $methods = $data['loginMethods'];
+            if (!is_array($methods)) {
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected data type for loginMethods: ' . gettype($methods) . ', report it on github', mode: $this->mode(), key: $this->key());
+            }
+
+            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), count($methods) > 0 ? 'Registered' : 'Not Registered', '', mode: $this->mode(), key: $this->key());
+        } catch (\Throwable $e) {
+            $message = strtolower($e->getMessage());
+            $reason = str_contains($message, 'timed out')
+                ? (str_contains($message, 'read') ? 'Server took too long to respond (Coursera)' : 'Connection timed out (Coursera)')
+                : $e->getMessage();
+
+            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $reason, mode: $this->mode(), key: $this->key());
+        }
+    }
+
+    /** @return array{0:string,1:string} */
+    protected function parseConnectorResponse(Response $response, string $target): array
+    {
+        return ['Error', 'Unexpected response'];
+    }
+}
