@@ -86,6 +86,11 @@
                 </label>
             </div>
 
+            <label class="flex items-center gap-3 rounded-2xl border border-orange-200 bg-orange-50 px-4 py-3">
+                <input id="api-june-only" type="checkbox">
+                <span class="text-sm">June-only modules</span>
+            </label>
+
             <div>
                 <label class="block text-sm font-medium text-slate-700 mb-1">Configured Proxy List</label>
                 <textarea rows="4" class="w-full rounded-2xl border-slate-300 bg-slate-50 text-slate-600" readonly>{{ $defaultProxyList }}</textarea>
@@ -143,6 +148,7 @@
     $bootPayload = [
         'moduleCatalog' => $moduleCatalog,
         'categoryCatalog' => $categoryCatalog,
+        'juneOnlyModuleKeys' => $juneOnlyModuleKeys,
         'pollInterval' => config('scanner.async.poll_interval_ms', 2000),
     ];
 @endphp
@@ -156,6 +162,7 @@
     const targetEl = document.getElementById('api-target');
     const useProxyEl = document.getElementById('api-use-proxy');
     const showHitsEl = document.getElementById('api-show-hits');
+    const juneOnlyEl = document.getElementById('api-june-only');
     const requestPreviewEl = document.getElementById('request-preview');
     const submitBtn = document.getElementById('submit-request');
     const pollBtn = document.getElementById('poll-latest');
@@ -175,6 +182,7 @@
 
     let currentRunId = null;
     let timer = null;
+    let currentEndpointMode = 'public';
 
     function escapeHtml(value) {
         return String(value ?? '')
@@ -206,13 +214,28 @@
     }
 
     function buildPayload() {
-        return {
+        const payload = {
             mode: modeEl.value,
             category: categoryEl.value || null,
             target: targetEl.value.trim(),
             use_proxy: useProxyEl.checked,
             show_hits: showHitsEl.checked,
         };
+
+        if (juneOnlyEl.checked) {
+            return {
+                mode: payload.mode,
+                category: payload.category,
+                targets: payload.target ? [payload.target] : [],
+                module_keys: boot.juneOnlyModuleKeys?.[payload.mode] || [],
+                use_proxy: payload.use_proxy,
+                only_found: payload.show_hits,
+                show_hits: payload.show_hits,
+                stop: 1,
+            };
+        }
+
+        return payload;
     }
 
     function renderRequestPreview() {
@@ -282,7 +305,8 @@
     }
 
     async function loadCategories(mode) {
-        const response = await fetch(`/api/v1/scan/modules/${mode}`);
+        const endpoint = juneOnlyEl.checked ? `/api/scanner/modules/${mode}` : `/api/v1/scan/modules/${mode}`;
+        const response = await fetch(endpoint);
         if (!response.ok) return;
         const data = await response.json();
         refillCategories(data.categories || []);
@@ -291,7 +315,10 @@
     async function pollRun() {
         if (!currentRunId) return;
 
-        const response = await fetch(`/api/v1/scan/${currentRunId}`);
+        const endpoint = currentEndpointMode === 'june-only'
+            ? `/api/scanner/runs/${currentRunId}`
+            : `/api/v1/scan/${currentRunId}`;
+        const response = await fetch(endpoint);
         const data = await response.json();
         rawResponse.textContent = JSON.stringify(data, null, 2);
 
@@ -308,7 +335,9 @@
         runPanel.classList.remove('hidden');
         runIdChip.classList.remove('hidden');
         runIdChip.textContent = run.id;
-        runSummary.textContent = `${run.mode} scan for ${run.target ?? ''}${run.category ? ` in ${run.category}` : ''}`;
+        const targetLabel = run.target ?? run.options?.targets?.[0] ?? '';
+        const categoryLabel = run.category ?? run.options?.category ?? null;
+        runSummary.textContent = `${run.mode} scan for ${targetLabel}${categoryLabel ? ` in ${categoryLabel}` : ''}`;
         runState.textContent = run.status;
         runProgress.style.width = `${run.progress}%`;
         runProgressText.textContent = `${run.processed}/${run.total} processed (${run.progress}%)`;
@@ -322,12 +351,15 @@
 
     async function submitRequest() {
         const payload = buildPayload();
-        if (!payload.target) {
+        const target = juneOnlyEl.checked ? (payload.targets?.[0] || '') : payload.target;
+        if (!target) {
             alert('Please enter a target.');
             return;
         }
 
-        const response = await fetch('/api/v1/scan', {
+        const endpoint = juneOnlyEl.checked ? '/api/scanner/runs' : '/api/v1/scan';
+        currentEndpointMode = juneOnlyEl.checked ? 'june-only' : 'public';
+        const response = await fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -358,8 +390,12 @@
         await loadCategories(modeEl.value);
         renderRequestPreview();
     });
+    juneOnlyEl.addEventListener('change', async () => {
+        await loadCategories(modeEl.value);
+        renderRequestPreview();
+    });
 
-    [categoryEl, targetEl, useProxyEl, showHitsEl].forEach(element => {
+    [categoryEl, targetEl, useProxyEl, showHitsEl, juneOnlyEl].forEach(element => {
         element.addEventListener('input', renderRequestPreview);
         element.addEventListener('change', renderRequestPreview);
     });

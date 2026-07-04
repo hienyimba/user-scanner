@@ -16,6 +16,7 @@ final class ApiTesterController extends Controller
             'moduleCatalog' => $engine->listModules($mode),
             'categoryCatalog' => $engine->listCategories($mode),
             'defaultProxyList' => implode(PHP_EOL, config('scanner.proxy_list', [])),
+            'juneOnlyModuleKeys' => config('scanner_june_only', ['username' => [], 'email' => []]),
         ]);
     }
 

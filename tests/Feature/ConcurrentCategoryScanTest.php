@@ -53,8 +53,10 @@ final class ConcurrentCategoryScanTest extends TestCase
     public function test_web_category_scan_redirects_to_run_dashboard(): void
     {
         Queue::fake();
+        $token = 'test-csrf-token';
 
-        $response = $this->post('/scanner', [
+        $response = $this->withSession(['_token' => $token])->post('/scanner', [
+            '_token' => $token,
             'mode' => 'username',
             'target' => 'alice',
             'category' => 'social',

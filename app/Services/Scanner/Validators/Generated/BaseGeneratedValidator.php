@@ -11,6 +11,31 @@ use Illuminate\Support\Facades\Http;
 
 abstract class BaseGeneratedValidator implements ValidatorContract
 {
+    /**
+     * @param array<string, mixed> $query
+     * @return array{0:string,1:array<string, mixed>}
+     */
+    protected function normalizeUrlAndQuery(string $url, array $query): array
+    {
+        $parts = parse_url($url);
+        if ($parts === false || !isset($parts['query'])) {
+            return [$url, $query];
+        }
+
+        $inlineQuery = [];
+        foreach (explode('&', $parts['query']) as $pair) {
+            if ($pair === '') {
+                continue;
+            }
+
+            [$rawKey, $rawValue] = array_pad(explode('=', $pair, 2), 2, '');
+            $inlineQuery[rawurldecode($rawKey)] = rawurldecode($rawValue);
+        }
+        $normalizedUrl = preg_replace('/\?.*$/', '', $url) ?? $url;
+
+        return [$normalizedUrl, array_merge($inlineQuery, $query)];
+    }
+
     protected function requestMethod(): string
     {
         return 'GET';
@@ -92,12 +117,15 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
 
         $method = strtoupper($this->requestMethod());
-        $url = $this->requestUrl($target);
-        $query = $this->requestQuery($target);
+        [$url, $query] = $this->normalizeUrlAndQuery($this->requestUrl($target), $this->requestQuery($target));
         $body = $this->requestBody($target);
         $rawBody = $this->requestRawBody($target);
         $headers = array_change_key_case($this->requestHeadersForTarget($target), CASE_LOWER);
         $contentType = (string) ($headers['content-type'] ?? 'application/json');
+
+        if ($query !== [] && $method !== 'GET') {
+            $request = $request->withOptions(['query' => $query]);
+        }
 
         if ($method === 'GET') {
             return $request->get($url, $query);
@@ -105,7 +133,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
         if ($method === 'POST') {
             if ($rawBody !== null) {
-                return $request->withBody($rawBody, $contentType)->post($url, $query);
+                return $request->withBody($rawBody, $contentType)->post($url);
             }
 
             if ($body !== []) {
@@ -115,7 +143,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
                 };
             }
 
-            return $request->post($url, $query);
+            return $request->post($url);
         }
 
         /** @var Response $response */
@@ -131,13 +159,18 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     {
         try {
             $response = $this->makeRequest($target, $options);
-            [$status, $reason] = $this->parseConnectorResponse($response, $target);
+            $challenge = $this->detectBlockedOrChallenged($response);
+            [$status, $reason] = $challenge ?? $this->parseConnectorResponse($response, $target);
 
             return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), $status, $reason, mode: $this->mode(), key: $this->key());
         } catch (\Throwable $e) {
-            $reason = str_contains(strtolower($e->getMessage()), 'timed out')
-                ? 'Request timeout'
-                : $e->getMessage();
+            $message = strtolower($e->getMessage());
+            $reason = match (true) {
+                str_contains($message, 'timed out') => 'Request timeout',
+                str_contains($message, 'ssl_read'),
+                str_contains($message, 'unexpected eof while reading') => 'TLS/anti-bot layer closed the connection unexpectedly',
+                default => $e->getMessage(),
+            };
 
             return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $reason, mode: $this->mode(), key: $this->key());
         }
@@ -150,8 +183,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
         return str_contains($contentType, 'text/html')
             || str_starts_with($body, '<!doctype')
-            || str_starts_with($body, '<html')
-            || str_starts_with($body, '<?xml');
+            || str_starts_with($body, '<html');
     }
 
     /**
@@ -164,12 +196,28 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             return ['Error', $this->key() . ': blocked/rate-limited (HTTP ' . $status . ')'];
         }
 
+        if ($status === 404) {
+            return null;
+        }
+
+        $effectiveUri = strtolower((string) ($response->effectiveUri() ?? ''));
+        if ($effectiveUri !== '' && (str_contains($effectiveUri, '/verify-human/') || str_contains($effectiveUri, 'captcha'))) {
+            return ['Error', $this->key() . ': anti-bot challenge detected'];
+        }
+
         if (!$this->looksLikeHtml($response)) {
             return null;
         }
 
         $body = strtolower($response->body());
-        foreach (['captcha', 'challenge', 'verify you are human', 'cloudflare', 'bot check'] as $needle) {
+        foreach ([
+            'verify you are human',
+            'bot check',
+            'security verification',
+            'checking your browser',
+            'just a moment',
+            'access denied',
+        ] as $needle) {
             if ($needle !== '' && str_contains($body, $needle)) {
                 return ['Error', $this->key() . ': anti-bot challenge detected'];
             }

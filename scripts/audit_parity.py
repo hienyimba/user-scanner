@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY_ROOT = ROOT / 'user-scanner-py' / 'user_scanner'
+PY_ROOT = ROOT / 'user-scanner-py-june-release' / 'user_scanner'
 PHP_ROOT = ROOT / 'app' / 'Services' / 'Scanner' / 'Validators' / 'Generated'
 
 from generate_validators import MANUAL_EMAIL_KEYS, MANUAL_USER_KEYS, discover_specs, sync_manual_sets  # type: ignore

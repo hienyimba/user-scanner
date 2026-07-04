@@ -1,12 +1,152 @@
 <?php
 
+$structuredProxyPool = [
+    [
+        'label' => 'us-8008',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '92.71.122.4',
+        'port' => 8008,
+        'country_code' => 'US',
+        'asn_name' => 'Cox',
+        'asn_number' => 22773,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'us-8005',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '92.249.29.44',
+        'port' => 8005,
+        'country_code' => 'US',
+        'asn_name' => 'Astound',
+        'asn_number' => 6079,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'us-8004',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '104.243.201.4',
+        'port' => 8004,
+        'country_code' => 'US',
+        'asn_name' => 'Cox',
+        'asn_number' => 22773,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'us-8003',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '104.243.200.57',
+        'port' => 8003,
+        'country_code' => 'US',
+        'asn_name' => 'Cox',
+        'asn_number' => 22773,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'us-8002',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '104.243.199.16',
+        'port' => 8002,
+        'country_code' => 'US',
+        'asn_name' => 'Cox',
+        'asn_number' => 22773,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'us-8001',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '92.71.123.21',
+        'port' => 8001,
+        'country_code' => 'US',
+        'asn_name' => 'Cox',
+        'asn_number' => 22773,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'gb-8010',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '45.41.149.119',
+        'port' => 8010,
+        'country_code' => 'GB',
+        'asn_name' => 'BRSK',
+        'asn_number' => 51809,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'gb-8009',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '45.41.148.181',
+        'port' => 8009,
+        'country_code' => 'GB',
+        'asn_name' => 'BRSK',
+        'asn_number' => 51809,
+        'tier' => 'primary',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'ca-8007',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '82.23.174.64',
+        'port' => 8007,
+        'country_code' => 'CA',
+        'asn_name' => 'Rogers',
+        'asn_number' => 812,
+        'tier' => 'fallback',
+        'enabled' => true,
+    ],
+    [
+        'label' => 'de-8006',
+        'entry_point' => 'disp.oxylabs.io',
+        'ip' => '64.105.212.162',
+        'port' => 8006,
+        'country_code' => 'DE',
+        'asn_name' => 'Deutsche Telekom',
+        'asn_number' => 3320,
+        'tier' => 'fallback',
+        'enabled' => true,
+    ],
+];
+
+$explicitProxyList = array_values(array_filter(array_map(
+    static fn (string $line): string => trim($line),
+    preg_split('/\R/', (string) env('SCANNER_PROXY_LIST', '')) ?: []
+), static fn (string $line): bool => $line !== ''));
+
+$configuredPoolProxyList = array_values(array_map(
+    static fn (array $proxy): string => sprintf('%s:%d', $proxy['entry_point'], $proxy['port']),
+    array_values(array_filter(
+        $structuredProxyPool,
+        static fn (array $proxy): bool => ($proxy['enabled'] ?? true) === true
+    ))
+));
+
 return [
     'user_agent' => env('SCANNER_USER_AGENT', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'),
     'verify_ssl' => env('SCANNER_VERIFY_SSL', false),
-    'proxy_list' => array_values(array_filter(array_map(
-        static fn (string $line): string => trim($line),
-        preg_split('/\R/', (string) env('SCANNER_PROXY_LIST', '')) ?: []
-    ), static fn (string $line): bool => $line !== '')),
+    'proxy_list' => $explicitProxyList !== [] ? $explicitProxyList : $configuredPoolProxyList,
+    'proxies' => [
+        'provider' => env('SCANNER_PROXY_PROVIDER', 'oxylabs_isp'),
+        'credentials' => [
+            'username' => env('SCANNER_PROXY_USERNAME'),
+            'password' => env('SCANNER_PROXY_PASSWORD'),
+        ],
+        'pool' => $structuredProxyPool,
+        'behavior' => [
+            'max_concurrent_per_proxy' => (int) env('SCANNER_PROXY_MAX_CONCURRENT_PER_IP', 2),
+            'max_retry_per_module' => (int) env('SCANNER_PROXY_MAX_RETRY_PER_MODULE', 1),
+            'failure_threshold' => (int) env('SCANNER_PROXY_FAILURE_THRESHOLD', 2),
+            'cooldown_min_seconds' => (int) env('SCANNER_PROXY_COOLDOWN_MIN_SECONDS', 30),
+            'cooldown_max_seconds' => (int) env('SCANNER_PROXY_COOLDOWN_MAX_SECONDS', 90),
+            'wait_timeout_seconds' => (int) env('SCANNER_PROXY_WAIT_TIMEOUT_SECONDS', 15),
+            'wait_retry_seconds' => (int) env('SCANNER_PROXY_WAIT_RETRY_SECONDS', 2),
+        ],
+    ],
 
     'async' => [
         'queue' => env('SCANNER_ASYNC_QUEUE', 'scanner'),
@@ -21,14 +161,15 @@ return [
         'username' => [],
         'email' => [
             'leetcode',
-            'instagram',
             'netflix',
             'sexvid',
             'made.porn',
             'flirtbate',
-            'polarsteps',
             'babestation',
             'flipkart',
+            'ama',
+            'buymeacoffee',
+            'luarocks',
         ],
     ],
 

@@ -13,6 +13,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Throwable;
 
 final class RunValidatorJob implements ShouldQueue
 {
@@ -49,22 +50,8 @@ final class RunValidatorJob implements ShouldQueue
         $store->markJobStarted($this->runId);
 
         try {
-            $proxy = null;
-            if (!empty($this->options['use_proxy']) && !empty($this->options['proxy_list'])) {
-                $proxyManager->loadFromText((string) $this->options['proxy_list']);
-                $proxy = $proxyManager->pick($this->proxyOffset);
-            }
-
-            $result = $engine->runPlannedValidator(
-                mode: $this->mode,
-                validatorKey: $this->validatorKey,
-                target: $this->target,
-                options: [
-                    ...$this->options,
-                    'proxy' => $proxy,
-                ],
-            );
-        } catch (\Throwable $e) {
+            $result = $this->runWithProxyPolicy($engine, $proxyManager);
+        } catch (Throwable $e) {
             $result = $this->errorResult($e->getMessage());
         }
 
@@ -83,6 +70,110 @@ final class RunValidatorJob implements ShouldQueue
             $this->targetIndex,
             $this->validatorIndex,
         );
+    }
+
+    private function runWithProxyPolicy(ScannerEngineService $engine, ProxyManagerService $proxyManager): ScanResult
+    {
+        if (empty($this->options['use_proxy']) || empty($this->options['proxy_list'])) {
+            return $this->attemptValidator($engine, null);
+        }
+
+        $proxyManager->loadFromText((string) $this->options['proxy_list']);
+        $lease = $proxyManager->acquire($this->proxyOffset);
+        if ($lease === null) {
+            return $this->errorResult('No proxy capacity available from configured pool');
+        }
+
+        $firstResult = $this->attemptValidator($engine, $lease['proxy']);
+        if (!$this->isRetryableProxyFailure($firstResult) || $this->maxProxyRetries() < 1) {
+            $this->finalizeLease($proxyManager, $lease['raw'], $firstResult);
+
+            return $firstResult;
+        }
+
+        $proxyManager->reportFailure($lease['raw']);
+        $proxyManager->release($lease['raw']);
+
+        $retryLease = $proxyManager->tierOf($lease['raw']) === 'primary'
+            ? $proxyManager->acquirePreferred('fallback', $this->proxyOffset + 1, [$lease['raw']])
+            : $proxyManager->acquire($this->proxyOffset + 1, [$lease['raw']]);
+        if ($retryLease === null) {
+            return $firstResult;
+        }
+
+        $retryResult = $this->attemptValidator($engine, $retryLease['proxy']);
+        $this->finalizeLease($proxyManager, $retryLease['raw'], $retryResult);
+
+        return $retryResult;
+    }
+
+    private function attemptValidator(ScannerEngineService $engine, ?string $proxy): ScanResult
+    {
+        try {
+            return $engine->runPlannedValidator(
+                mode: $this->mode,
+                validatorKey: $this->validatorKey,
+                target: $this->target,
+                options: [
+                    ...$this->options,
+                    'proxy' => $proxy,
+                ],
+            );
+        } catch (Throwable $e) {
+            return $this->errorResult($e->getMessage());
+        }
+    }
+
+    private function finalizeLease(ProxyManagerService $proxyManager, string $rawProxy, ScanResult $result): void
+    {
+        if ($this->isRetryableProxyFailure($result)) {
+            $proxyManager->reportFailure($rawProxy);
+        } else {
+            $proxyManager->reportSuccess($rawProxy);
+        }
+
+        $proxyManager->release($rawProxy);
+    }
+
+    private function maxProxyRetries(): int
+    {
+        return max(0, (int) config('scanner.proxies.behavior.max_retry_per_module', 1));
+    }
+
+    private function isRetryableProxyFailure(ScanResult $result): bool
+    {
+        if ($result->status !== 'Error') {
+            return false;
+        }
+
+        $reason = strtolower(trim($result->reason));
+        if ($reason === '') {
+            return false;
+        }
+
+        foreach ([
+            '403',
+            '429',
+            'timeout',
+            'timed out',
+            'forbidden',
+            'cloudflare',
+            'waf',
+            'captcha',
+            'ip block',
+            'rate limited',
+            'ssl_read',
+            'unexpected eof',
+            'curl error',
+            'unexpected response body',
+            'invalid api response format',
+        ] as $needle) {
+            if (str_contains($reason, $needle)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function errorResult(string $reason): ScanResult

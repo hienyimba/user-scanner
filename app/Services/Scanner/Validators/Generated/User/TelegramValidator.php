@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\User;
 
+// parity-source: C:/Users/hieny/GitHub/user-scanner/user-scanner-py-june-release/user_scanner/user_scan/social/telegram.py
+// parity-class: generated
+
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 
@@ -31,7 +34,7 @@ final class TelegramValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://t.me';
+        return 'https://t.me/{user}';
     }
 
     protected function requestMethod(): string
@@ -56,64 +59,21 @@ final class TelegramValidator extends BaseGeneratedValidator
 
     protected function requestHeaders(): array
     {
-        return [
-            // No connector-specific headers inferred.
-        ];
+        return [];
     }
 
-    /** @return array{0:string,1:string} */
+    protected function requestQuery(string $target): array
+    {
+        return [];
+    }
+
+
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
-        $body = strtolower($response->body());
+        $body = $response->body();
+        $finalUrl = (string) ($response->effectiveUri() ?? '');
 
-        if ($blocked = $this->detectBlockedOrChallenged($response)) {
-            return $blocked;
-        }
-
-        $availableStatuses = [];
-        $takenStatuses = [200];
-        $availableIndicators = [];
-        $takenIndicators = [];
-
-        if ($this->mode() === 'username') {
-            if (in_array($status, $availableStatuses, true)) {
-                return ['Available', ''];
-            }
-            if (in_array($status, $takenStatuses, true)) {
-                return ['Taken', ''];
-            }
-            foreach ($takenIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Taken', ''];
-                }
-            }
-            foreach ($availableIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Available', ''];
-                }
-            }
-
-            return ['Error', $this->key() . ': indeterminate username response (HTTP ' . $status . ')'];
-        }
-
-        if (in_array($status, $takenStatuses, true)) {
-            return ['Registered', ''];
-        }
-        if (in_array($status, $availableStatuses, true)) {
-            return ['Not Registered', ''];
-        }
-        foreach ($takenIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Registered', ''];
-            }
-        }
-        foreach ($availableIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Not Registered', ''];
-            }
-        }
-
-        return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+        return ['Error', 'Unexpected response body'];
     }
 }

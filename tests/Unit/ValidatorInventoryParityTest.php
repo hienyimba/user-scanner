@@ -12,14 +12,22 @@ final class ValidatorInventoryParityTest extends TestCase
     {
         $root = dirname(__DIR__, 2);
 
-        $pythonUser = glob($root . '/user-scanner-py/user_scanner/user_scan/*/*.py') ?: [];
-        $pythonEmail = glob($root . '/user-scanner-py/user_scanner/email_scan/*/*.py') ?: [];
+        $pythonUser = glob($root . '/user-scanner-py-june-release/user_scanner/user_scan/*/*.py') ?: [];
+        $pythonEmail = glob($root . '/user-scanner-py-june-release/user_scanner/email_scan/*/*.py') ?: [];
         $phpUser = glob($root . '/app/Services/Scanner/Validators/Generated/User/*Validator.php') ?: [];
         $phpEmail = glob($root . '/app/Services/Scanner/Validators/Generated/Email/*Validator.php') ?: [];
 
-        $pythonUser = array_values(array_filter($pythonUser, static fn (string $path): bool => !str_ends_with($path, '__init__.py')));
-        $pythonEmail = array_values(array_filter($pythonEmail, static fn (string $path): bool => !str_ends_with($path, '__init__.py')));
+        $pythonUser = array_values(array_filter(
+            $pythonUser,
+            static fn (string $path): bool => !str_ends_with($path, '__init__.py') && !str_contains($path, DIRECTORY_SEPARATOR . 'abandoned' . DIRECTORY_SEPARATOR)
+        ));
+        $pythonEmail = array_values(array_filter(
+            $pythonEmail,
+            static fn (string $path): bool => !str_ends_with($path, '__init__.py') && !str_contains($path, DIRECTORY_SEPARATOR . 'abandoned' . DIRECTORY_SEPARATOR)
+        ));
 
+        self::assertCount(188, $pythonUser, 'June source username inventory drifted.');
+        self::assertCount(105, $pythonEmail, 'June source email inventory drifted.');
         self::assertCount(count($pythonUser), $phpUser, 'Generated user validator count drifted from Python inventory.');
         self::assertCount(count($pythonEmail), $phpEmail, 'Generated email validator count drifted from Python inventory.');
     }

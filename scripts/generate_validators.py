@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-PY_ROOT = ROOT / 'user-scanner-py' / 'user_scanner'
+PY_ROOT = ROOT / 'user-scanner-py-june-release' / 'user_scanner'
 PHP_ROOT = ROOT / 'app' / 'Services' / 'Scanner' / 'Validators' / 'Generated'
 CONFIG_FILE = ROOT / 'config' / 'scanner_generated.php'
 
@@ -198,14 +198,15 @@ def classify_manual(source: str, mode: str, key: str) -> bool:
 
 def extract_rules(source: str, mode: str) -> tuple[list[Rule], str] | None:
     process_match = re.search(r'def\s+process\(response\).*?:\n(?P<body>[\s\S]*?)\n\s*return\s+(?:generic_validate|status_validate)', source)
-    if not process_match:
-        return None
-    body = process_match.group('body')
+    body = process_match.group('body') if process_match else source
+    direct_style = process_match is None
     rules: list[Rule] = []
     fallback = 'Unexpected response body'
-    pattern = re.compile(r'if\s+(?P<cond>[^:]+):\s*\n\s*return\s+Result\.(?P<kind>taken|available|error)\((?P<arg>[^\)]*)\)', re.M)
+    pattern = re.compile(r'if\s+(?P<cond>[^\n:]+):\s*\n\s*return\s+Result\.(?P<kind>taken|available|error)\((?P<arg>[^\)]*)\)', re.M)
     for m in pattern.finditer(body):
         cond = m.group('cond').strip()
+        if direct_style and not any(token in cond for token in ('response.', 'resp.', 'html', 'final_url')):
+            continue
         kind = m.group('kind')
         arg = m.group('arg').strip().strip('"\'')
         if kind == 'error':
@@ -216,7 +217,7 @@ def extract_rules(source: str, mode: str) -> tuple[list[Rule], str] | None:
             status = 'Available' if mode == 'username' else 'Not Registered'
         conditions = [piece.strip() for piece in cond.split(' or ')]
         rules.append(Rule(conditions=conditions, status=status))
-    return rules, fallback
+    return (rules, fallback) if rules else None
 
 
 def build_spec(py_file: Path, mode: str, category: str) -> ModuleSpec:
@@ -271,12 +272,18 @@ def build_spec(py_file: Path, mode: str, category: str) -> ModuleSpec:
 
 def php_condition(cond: str) -> str:
     cond = cond.strip()
-    cond = cond.replace('response.status_code', '$status')
+    cond = re.sub(r'\b(?:response|resp)\.status_code\b', '$status', cond)
     cond = cond.replace('response.text.lower()', 'strtolower($body)')
+    cond = cond.replace('resp.text.lower()', 'strtolower($body)')
     cond = cond.replace('response.text', '$body')
+    cond = cond.replace('resp.text', '$body')
     cond = re.sub(r'\b(?:data|html_text|html)\b', '$body', cond)
-    cond = cond.replace('response.status_code ==', '$status ===')
+    cond = cond.replace('final_url', '$finalUrl')
     cond = cond.replace(' and ', ' && ').replace(' or ', ' || ')
+    cond = re.sub(r'\$status\s*==\s*(\d+)', r'$status === \1', cond)
+    cond = re.sub(r'\$status\s+in\s+\(([^\)]+)\)', lambda m: f"in_array($status, [{m.group(1)}], true)", cond)
+    cond = re.sub(r'\$status\s+in\s+\[([^\]]+)\]', lambda m: f"in_array($status, [{m.group(1)}], true)", cond)
+    cond = re.sub(r'(["\'])(.+?)\1\s+in\s+\$finalUrl', lambda m: f"str_contains($finalUrl, '{php_escape(m.group(2))}')", cond)
     cond = re.sub(r'(["\'])(.+?)\1\s+in\s+(?:\$body|strtolower\(\$body\))', lambda m: f"str_contains($body, '{php_escape(m.group(2))}')", cond)
     cond = re.sub(r'f"([^"]*?)\{user\}([^"]*?)"\s+in\s+strtolower\(\$body\)', lambda m: f"str_contains(strtolower($body), '{php_escape(m.group(1).lower())}' . strtolower($target) . '{php_escape(m.group(2).lower())}')", cond)
     cond = re.sub(r'f"([^"]*?)\{user\}([^"]*?)"\s+in\s+\$body', lambda m: f"str_contains($body, '{php_escape(m.group(1))}' . $target . '{php_escape(m.group(2))}')", cond)
@@ -317,7 +324,7 @@ def render_body(spec: ModuleSpec) -> str:
 
 
 def render_rules(spec: ModuleSpec) -> str:
-    lines = ["    protected function parseConnectorResponse(Response $response, string $target): array", '    {', '        $status = $response->status();', '        $body = $response->body();', '']
+    lines = ["    protected function parseConnectorResponse(Response $response, string $target): array", '    {', '        $status = $response->status();', '        $body = $response->body();', "        $finalUrl = (string) ($response->effectiveUri() ?? '');", '']
     for rule in spec.rules:
         joined = ' || '.join(php_condition(c) for c in rule.conditions)
         lines.append(f"        if ({joined}) {{")
@@ -416,7 +423,7 @@ def discover_specs() -> list[ModuleSpec]:
     specs: list[ModuleSpec] = []
     for mode, folder in (('username', 'user_scan'), ('email', 'email_scan')):
         for category_dir in sorted((PY_ROOT / folder).iterdir()):
-            if not category_dir.is_dir() or category_dir.name.startswith('__'):
+            if not category_dir.is_dir() or category_dir.name.startswith('__') or category_dir.name.lower() == 'abandoned':
                 continue
             for py_file in sorted(category_dir.glob('*.py')):
                 if py_file.name == '__init__.py':
@@ -441,7 +448,7 @@ def write_validator(spec: ModuleSpec) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f'{spec.class_name}.php'
     explicit_manual = MANUAL_USER_KEYS if spec.mode == 'username' else MANUAL_EMAIL_KEYS
-    if spec.key in explicit_manual and path.exists():
+    if spec.key in explicit_manual:
         return
     path.write_text(render_generated_php(spec), encoding='utf-8')
 

@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\User;
 
+// parity-source: C:/Users/hieny/GitHub/user-scanner/user-scanner-py-june-release/user_scanner/user_scan/gaming/steam.py
+// parity-class: generated
+
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 
@@ -31,7 +34,12 @@ final class SteamValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://steamcommunity.com/id';
+        return 'https://steamcommunity.com/id/{user}/';
+    }
+
+    protected function requestMethod(): string
+    {
+        return 'GET';
     }
 
     protected function requestUrl(string $target): string
@@ -39,17 +47,37 @@ final class SteamValidator extends BaseGeneratedValidator
         return "https://steamcommunity.com/id/{$target}/";
     }
 
-    /** @return array{0:string,1:string} */
+    protected function followRedirects(): bool
+    {
+        return true;
+    }
+
+    protected function timeoutSeconds(): int
+    {
+        return 10;
+    }
+
+    protected function requestHeaders(): array
+    {
+        return [];
+    }
+
+    protected function requestQuery(string $target): array
+    {
+        return [];
+    }
+
+
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        if ($response->status() !== 200) {
-            return ['Error', 'Invalid status code'];
-        }
+        $status = $response->status();
+        $body = $response->body();
+        $finalUrl = (string) ($response->effectiveUri() ?? '');
 
-        if (str_contains($response->body(), 'Error</title>')) {
+        if (str_contains($body, 'Error</title>')) {
             return ['Available', ''];
         }
 
-        return ['Taken', ''];
+        return ['Error', 'Unexpected response body'];
     }
 }

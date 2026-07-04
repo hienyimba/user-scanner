@@ -167,6 +167,7 @@ final class PublicScanApiTest extends TestCase
         $response->assertOk();
         $response->assertSee('Public API Tester');
         $response->assertSee('POST /api/v1/scan');
+        $response->assertSee('June-only modules');
     }
 
     public function test_external_api_tester_page_renders_remote_base_input(): void
