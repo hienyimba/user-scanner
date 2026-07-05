@@ -31,7 +31,7 @@ final class InstagramValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://www.instagram.com';
+        return 'https://www.instagram.com/{user}/';
     }
 
     protected function requestUrl(string $target): string
@@ -78,9 +78,118 @@ final class InstagramValidator extends BaseGeneratedValidator
         }
 
         if ($status === 200) {
-            return ['Taken', ''];
+            if (data_get($response->json(), 'data.user') !== null) {
+                return ['Taken', ''];
+            }
+
+            return ['Available', ''];
         }
 
         return ['Error', $this->key() . ': blocked/rate-limited (HTTP ' . $status . ')'];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $user = data_get($response->json(), 'data.user');
+        if (!is_array($user)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => trim((string) ($user['username'] ?? '')) ?: $target,
+            'sources' => ['api_json'],
+        ];
+
+        $fullName = trim((string) ($user['full_name'] ?? ''));
+        if ($fullName !== '') {
+            $metadata['display_name'] = $fullName;
+        }
+
+        if (isset($user['id'])) {
+            $metadata['instagram_id'] = trim((string) $user['id']);
+        }
+
+        $avatar = trim((string) ($user['profile_pic_url_hd'] ?? ''));
+        if ($avatar !== '') {
+            $metadata['avatar_url'] = $avatar;
+        }
+
+        $bio = trim((string) ($user['biography'] ?? ''));
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
+        }
+
+        $businessEmail = trim((string) ($user['business_email'] ?? ''));
+        if ($businessEmail !== '') {
+            $metadata['public_email'] = $businessEmail;
+        }
+
+        $externalUrl = trim((string) ($user['external_url'] ?? ''));
+        if ($externalUrl !== '') {
+            $metadata['website_url'] = $externalUrl;
+            $metadata['external_links'] = [$externalUrl];
+        }
+
+        if (isset($user['fbid'])) {
+            $metadata['facebook_uid'] = trim((string) $user['fbid']);
+        }
+
+        foreach ([
+            'is_business_account' => 'is_business',
+            'is_joined_recently' => 'is_joined_recently',
+            'is_private' => 'is_private',
+            'is_verified' => 'is_verified',
+        ] as $sourceKey => $metadataKey) {
+            if (array_key_exists($sourceKey, $user)) {
+                $metadata[$metadataKey] = (bool) $user[$sourceKey];
+            }
+        }
+
+        $followers = data_get($user, 'edge_followed_by.count');
+        if (is_numeric($followers)) {
+            $metadata['followers'] = (int) $followers;
+        }
+
+        $following = data_get($user, 'edge_follow.count');
+        if (is_numeric($following)) {
+            $metadata['following'] = (int) $following;
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = $metadata['bio'];
+        }
+        if (isset($metadata['followers'])) {
+            $summary['Followers'] = (string) $metadata['followers'];
+        }
+        if (isset($metadata['following'])) {
+            $summary['Following'] = (string) $metadata['following'];
+        }
+        if (is_string($metadata['website_url'] ?? null) && $metadata['website_url'] !== '') {
+            $summary['Website'] = $metadata['website_url'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

@@ -54,18 +54,7 @@ final class FDroidValidator extends BaseGeneratedValidator
     }
 
     protected function parseConnectorResponse(Response $response, string $target): array
-{
-    $status = $response->status();
-    $body = $response->body();
-
-    if ($status === 404) {
-        return ['Available', ''];
+    {
+        return $this->parseDiscourseProfileResponse($response);
     }
-
-    if ($status === 200) {
-        return ['Taken', ''];
-    }
-
-    return ['Error', 'Unexpected response body'];
-}
 }

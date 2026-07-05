@@ -101,7 +101,7 @@ final class PublicScanApiTest extends TestCase
             'url' => 'https://alpha.test',
             'status' => 'Found',
             'reason' => '',
-            'extra' => '',
+            'extra' => "Masked phone: ***1234\nLogin methods: password",
             'mode' => 'username',
             'key' => 'alpha',
         ], 0, 0);
@@ -133,6 +133,104 @@ final class PublicScanApiTest extends TestCase
         $results = $response->json('results');
         $this->assertCount(1, $results);
         $this->assertSame('alpha', $results[0]['key']);
+        $this->assertSame("Masked phone: ***1234\nLogin methods: password", $results[0]['extra']);
+    }
+
+    public function test_public_scan_status_returns_structured_metadata_fields(): void
+    {
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: [],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Alpha',
+            'url' => 'https://alpha.test',
+            'status' => 'Found',
+            'reason' => '',
+            'extra' => 'Name: Alice Example',
+            'mode' => 'username',
+            'key' => 'alpha',
+            'platform' => 'alpha',
+            'normalized_status' => 'found',
+            'profile_url' => 'https://alpha.test/users/alice',
+            'confidence' => 0.97,
+            'metadata' => [
+                'display_name' => 'Alice Example',
+                'username' => 'alice',
+                'external_links' => ['https://portfolio.test'],
+                'status_detail' => 'found',
+                'observed_metadata_level' => 4,
+                'evidence' => ['profile_url', 'display_name'],
+            ],
+            'external_links' => ['https://portfolio.test'],
+            'error' => null,
+        ], 0, 0);
+
+        $response = $this->getJson("/api/v1/scan/{$runId}");
+
+        $response->assertOk();
+        $results = $response->json('results');
+        $this->assertCount(1, $results);
+        $this->assertSame('found', $results[0]['normalized_status']);
+        $this->assertSame('https://alpha.test/users/alice', $results[0]['profile_url']);
+        $this->assertSame(0.97, $results[0]['confidence']);
+        $this->assertSame('Alice Example', $results[0]['metadata']['display_name']);
+        $this->assertSame(['https://portfolio.test'], $results[0]['external_links']);
+        $this->assertSame('found', $results[0]['normalized']['status_detail']);
+        $this->assertSame(4, $results[0]['normalized']['metadata_level']);
+        $this->assertContains('profile_url', $results[0]['normalized']['evidence']);
+        $this->assertContains('display_name', $results[0]['normalized']['evidence']);
+    }
+
+    public function test_public_scan_status_returns_normalized_not_found_fields(): void
+    {
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: [],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['beta'],
+        );
+
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Beta',
+            'url' => 'https://beta.test/users/alice',
+            'status' => 'Not Found',
+            'reason' => '',
+            'extra' => '',
+            'mode' => 'username',
+            'key' => 'beta',
+        ], 0, 0);
+
+        $response = $this->getJson("/api/v1/scan/{$runId}");
+
+        $response->assertOk();
+        $results = $response->json('results');
+        $this->assertCount(1, $results);
+        $this->assertSame('not_found', $results[0]['normalized_status']);
+        $this->assertNull($results[0]['profile_url']);
+        $this->assertSame(0.95, $results[0]['confidence']);
+        $this->assertSame('alice', $results[0]['metadata']['username']);
+        $this->assertSame('not_found', $results[0]['metadata']['status_detail']);
+        $this->assertSame(1, $results[0]['normalized']['metadata_level']);
+        $this->assertEmpty($results[0]['normalized']['evidence']);
+        $this->assertNull($results[0]['normalized']['error']);
     }
 
     public function test_public_modules_endpoint_returns_categories_and_modules(): void
@@ -144,6 +242,13 @@ final class PublicScanApiTest extends TestCase
             'mode' => 'username',
         ]);
 
+        $response->assertJsonPath('metadata_summary.documented_modules', 293);
+        $response->assertJsonPath('metadata_summary.validated_modules', 113);
+        $response->assertJsonPath('metadata_summary.validated_level_3_plus', 112);
+        $response->assertJsonPath('metadata_summary.validated_level_4', 100);
+        $response->assertJsonPath('modules.0.metadata_capability_level', 1);
+        $response->assertJsonPath('modules.0.metadata_capability_strategy', 'unknown');
+        $response->assertJsonPath('modules.0.metadata_validated_level', null);
         $this->assertContains('social', $response->json('categories'));
         $this->assertSame('alpha', $response->json('modules.0.key'));
     }

@@ -6,6 +6,7 @@ namespace App\Services\Scanner\Validators\Generated\User;
 
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Str;
 
 final class LeetcodeValidator extends BaseGeneratedValidator
 {
@@ -31,7 +32,7 @@ final class LeetcodeValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://leetcode.com/u';
+        return 'https://leetcode.com/u/{user}/';
     }
 
     protected function requestMethod(): string
@@ -41,7 +42,10 @@ final class LeetcodeValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://leetcode.com/u/{$target}/";
+        $query = 'query userPublicProfile($username: String!) { matchedUser(username: $username) { username profile { realName aboutMe userAvatar countryName company school ranking } } }';
+        $variables = json_encode(['username' => $target], JSON_THROW_ON_ERROR);
+
+        return 'https://leetcode.com/graphql?query=' . rawurlencode($query) . '&variables=' . rawurlencode($variables);
     }
 
     protected function followRedirects(): bool
@@ -64,56 +68,110 @@ final class LeetcodeValidator extends BaseGeneratedValidator
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        $status = $response->status();
-        $body = strtolower($response->body());
-
-        if ($blocked = $this->detectBlockedOrChallenged($response)) {
-            return $blocked;
+        if ($response->status() !== 200) {
+            return ['Error', 'Unexpected status: ' . $response->status()];
         }
 
-        $availableStatuses = [404];
-        $takenStatuses = [200];
-        $availableIndicators = [];
-        $takenIndicators = [];
-
-        if ($this->mode() === 'username') {
-            if (in_array($status, $availableStatuses, true)) {
-                return ['Available', ''];
-            }
-            if (in_array($status, $takenStatuses, true)) {
-                return ['Taken', ''];
-            }
-            foreach ($takenIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Taken', ''];
-                }
-            }
-            foreach ($availableIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Available', ''];
-                }
-            }
-
-            return ['Error', $this->key() . ': indeterminate username response (HTTP ' . $status . ')'];
+        $data = $response->json();
+        if (is_array($data) && isset($data['errors']) && str_contains(json_encode($data['errors']), 'That user does not exist')) {
+            return ['Available', ''];
         }
 
-        if (in_array($status, $takenStatuses, true)) {
-            return ['Registered', ''];
+        if (data_get($data, 'data.matchedUser') !== null) {
+            return ['Taken', ''];
         }
-        if (in_array($status, $availableStatuses, true)) {
-            return ['Not Registered', ''];
+
+        return ['Available', ''];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
         }
-        foreach ($takenIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Registered', ''];
-            }
+
+        $user = data_get($response->json(), 'data.matchedUser');
+        if (!is_array($user)) {
+            return [];
         }
-        foreach ($availableIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Not Registered', ''];
+
+        $profile = $user['profile'] ?? null;
+        if (!is_array($profile)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => trim((string) ($user['username'] ?? '')) ?: $target,
+            'sources' => ['api_json'],
+        ];
+
+        $fullName = trim((string) ($profile['realName'] ?? ''));
+        if ($fullName !== '') {
+            $metadata['display_name'] = $fullName;
+        }
+
+        $bio = trim((string) ($profile['aboutMe'] ?? ''));
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
+        }
+
+        $avatar = trim((string) ($profile['userAvatar'] ?? ''));
+        if ($avatar !== '') {
+            $metadata['avatar_url'] = $avatar;
+        }
+
+        $country = trim((string) ($profile['countryName'] ?? ''));
+        if ($country !== '') {
+            $metadata['location'] = $country;
+        }
+
+        foreach ([
+            'company' => 'company',
+            'school' => 'school',
+            'ranking' => 'ranking',
+        ] as $sourceKey => $metadataKey) {
+            $value = $profile[$sourceKey] ?? null;
+            if (is_numeric($value)) {
+                $metadata[$metadataKey] = (int) $value;
+            } elseif (is_string($value) && trim($value) !== '') {
+                $metadata[$metadataKey] = trim($value);
             }
         }
 
-        return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = Str::limit($metadata['bio'], 160, '...');
+        }
+        if (is_string($metadata['location'] ?? null) && $metadata['location'] !== '') {
+            $summary['Country'] = $metadata['location'];
+        }
+        if (isset($metadata['company'])) {
+            $summary['Company'] = (string) $metadata['company'];
+        }
+        if (isset($metadata['school'])) {
+            $summary['School'] = (string) $metadata['school'];
+        }
+        if (isset($metadata['ranking'])) {
+            $summary['Ranking'] = (string) $metadata['ranking'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

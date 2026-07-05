@@ -75,4 +75,73 @@ final class NiftygatewayValidator extends BaseGeneratedValidator
 
         return ['Error', 'Unexpected response body, report it via GitHub issues.'];
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $user = data_get($response->json(), 'userProfileAndNifties');
+        if (!is_array($user)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        if (isset($user['id']) && is_numeric($user['id'])) {
+            $metadata['niftygateway_id'] = (int) $user['id'];
+        } elseif (isset($user['id'])) {
+            $metadata['niftygateway_id'] = (string) $user['id'];
+        }
+
+        if (isset($user['user_id']) && is_numeric($user['user_id'])) {
+            $metadata['user_id'] = (int) $user['user_id'];
+        } elseif (isset($user['user_id'])) {
+            $metadata['user_id'] = (string) $user['user_id'];
+        }
+
+        $name = trim((string) ($user['name'] ?? ''));
+        if ($name !== '') {
+            $metadata['display_name'] = $name;
+        }
+
+        $bio = trim((string) ($user['bio'] ?? ''));
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['niftygateway_id'])) {
+            $summary['ID'] = (string) $metadata['niftygateway_id'];
+        }
+        if (isset($metadata['user_id'])) {
+            $summary['User ID'] = (string) $metadata['user_id'];
+        }
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = $metadata['bio'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
 }

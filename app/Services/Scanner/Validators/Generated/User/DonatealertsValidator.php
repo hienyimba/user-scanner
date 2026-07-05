@@ -31,7 +31,7 @@ final class DonatealertsValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://www.donationalerts.com/r';
+        return 'https://www.donationalerts.com/r/{user}';
     }
 
     protected function requestMethod(): string
@@ -115,5 +115,64 @@ final class DonatealertsValidator extends BaseGeneratedValidator
         }
 
         return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = data_get($response->json(), 'data');
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        $name = trim((string) ($data['name'] ?? ''));
+        if ($name !== '') {
+            $metadata['display_name'] = $name;
+        }
+
+        $currency = trim((string) ($data['preferred_currency'] ?? ''));
+        if ($currency !== '') {
+            $metadata['currency'] = $currency;
+        }
+
+        $avatar = trim((string) ($data['avatar'] ?? ''));
+        if ($avatar !== '') {
+            $metadata['avatar_url'] = $avatar;
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['currency'] ?? null) && $metadata['currency'] !== '') {
+            $summary['Currency'] = $metadata['currency'];
+        }
+        if (is_string($metadata['avatar_url'] ?? null) && $metadata['avatar_url'] !== '') {
+            $summary['Avatar'] = $metadata['avatar_url'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

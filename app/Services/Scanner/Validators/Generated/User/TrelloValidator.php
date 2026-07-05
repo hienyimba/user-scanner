@@ -58,10 +58,6 @@ final class TrelloValidator extends BaseGeneratedValidator
     $status = $response->status();
     $body = $response->body();
 
-    if ($status === 401) {
-        return ['Error', 'Unexpected response body, report it via GitHub issues.'];
-    }
-
     if ($status === 401 || $status === 404) {
         return ['Available', ''];
     }
@@ -72,4 +68,72 @@ final class TrelloValidator extends BaseGeneratedValidator
 
     return ['Error', 'Unexpected response body'];
 }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => trim((string) ($data['username'] ?? '')) ?: $target,
+            'sources' => ['api_json'],
+        ];
+
+        if (isset($data['id']) && is_numeric($data['id'])) {
+            $metadata['trello_id'] = (string) $data['id'];
+        } elseif (isset($data['id'])) {
+            $metadata['trello_id'] = trim((string) $data['id']);
+        }
+
+        $fullName = trim((string) ($data['fullName'] ?? ''));
+        if ($fullName !== '') {
+            $metadata['display_name'] = $fullName;
+        }
+
+        $bio = trim((string) ($data['bio'] ?? ''));
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
+        }
+
+        $initials = trim((string) ($data['initials'] ?? ''));
+        if ($initials !== '') {
+            $metadata['initials'] = $initials;
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['trello_id'])) {
+            $summary['ID'] = (string) $metadata['trello_id'];
+        }
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = $metadata['bio'];
+        }
+        if (is_string($metadata['initials'] ?? null) && $metadata['initials'] !== '') {
+            $summary['Initials'] = $metadata['initials'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
 }

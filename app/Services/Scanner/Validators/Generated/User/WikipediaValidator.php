@@ -72,4 +72,126 @@ final class WikipediaValidator extends BaseGeneratedValidator
 
     return ['Taken', ''];
 }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $user = $this->extractUserData($response);
+        if ($user === null) {
+            return [];
+        }
+
+        $username = $this->stringValue($user['name'] ?? null) ?? $target;
+        $editCount = $this->intValue($user['editcount'] ?? null);
+
+        $metadata = [
+            'display_name' => $username,
+            'username' => $username,
+            'sources' => ['api_json'],
+        ];
+
+        $userId = $this->intValue($user['userid'] ?? null);
+        if ($userId !== null) {
+            $metadata['wikipedia_user_id'] = $userId;
+        }
+
+        if ($editCount !== null) {
+            $metadata['edit_count'] = $editCount;
+            $metadata['posts_count'] = $editCount;
+        }
+
+        $createdAt = $this->normalizeDateValue($user['registration'] ?? null);
+        if ($createdAt !== null) {
+            $metadata['created_at'] = $createdAt;
+        }
+
+        $gender = $this->stringValue($user['gender'] ?? null);
+        if ($gender !== null) {
+            $metadata['gender'] = $gender;
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['wikipedia_user_id'])) {
+            $summary['User ID'] = (string) $metadata['wikipedia_user_id'];
+        }
+        if (isset($metadata['edit_count'])) {
+            $summary['Edit Count'] = (string) $metadata['edit_count'];
+        }
+        if (is_string($metadata['gender'] ?? null) && $metadata['gender'] !== '') {
+            $summary['Gender'] = $metadata['gender'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function extractUserData(Response $response): ?array
+    {
+        $data = $response->json();
+        $users = data_get($data, 'query.users', []);
+        if (!is_array($users) || $users === []) {
+            return null;
+        }
+
+        $user = $users[0] ?? null;
+
+        return is_array($user) ? $user : null;
+    }
+
+    private function stringValue(mixed $value): ?string
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $string = trim((string) $value);
+
+        return $string !== '' ? $string : null;
+    }
+
+    private function intValue(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    private function normalizeDateValue(mixed $value): ?string
+    {
+        $date = $this->stringValue($value);
+        if ($date === null) {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable($date))->format(\DateTimeInterface::ATOM);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
 }

@@ -31,7 +31,7 @@ final class RedditValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://www.reddit.com/user';
+        return 'https://www.reddit.com/user/{user}';
     }
 
     protected function requestUrl(string $target): string
@@ -75,5 +75,109 @@ final class RedditValidator extends BaseGeneratedValidator
         }
 
         return ['Error', 'HTTP ' . $status];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $user = data_get($response->json(), 'data');
+        if (!is_array($user)) {
+            return [];
+        }
+
+        $username = trim((string) ($user['name'] ?? ''));
+        if ($username === '') {
+            $username = $target;
+        }
+
+        $subreddit = data_get($user, 'subreddit');
+        $metadata = [
+            'username' => $username,
+            'sources' => ['api_json'],
+        ];
+
+        $displayName = trim((string) data_get($subreddit, 'title', ''));
+        if ($displayName !== '') {
+            $metadata['display_name'] = $displayName;
+        }
+
+        $avatarUrl = trim((string) ($user['icon_img'] ?? ($user['snoovatar_img'] ?? data_get($subreddit, 'icon_img', ''))));
+        if ($avatarUrl !== '') {
+            $metadata['avatar_url'] = $avatarUrl;
+        }
+
+        $bio = trim((string) data_get($subreddit, 'public_description', ''));
+        if ($bio === '') {
+            $bio = trim((string) data_get($subreddit, 'description', ''));
+        }
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
+        }
+
+        if (is_numeric(data_get($subreddit, 'subscribers'))) {
+            $metadata['followers'] = (int) data_get($subreddit, 'subscribers');
+        }
+
+        if (isset($user['created_utc']) && is_numeric($user['created_utc'])) {
+            try {
+                $metadata['created_at'] = (new \DateTimeImmutable('@' . (string) $user['created_utc']))
+                    ->setTimezone(new \DateTimeZone('UTC'))
+                    ->format(DATE_ATOM);
+            } catch (\Throwable) {
+                // Ignore invalid upstream timestamps.
+            }
+        }
+
+        if (array_key_exists('verified', $user)) {
+            $metadata['is_verified'] = (bool) $user['verified'];
+        }
+
+        foreach ([
+            'total_karma' => 'karma',
+            'link_karma' => 'link_karma',
+            'comment_karma' => 'comment_karma',
+            'awarder_karma' => 'awarder_karma',
+            'awardee_karma' => 'awardee_karma',
+        ] as $sourceKey => $metadataKey) {
+            if (isset($user[$sourceKey]) && is_numeric($user[$sourceKey])) {
+                $metadata[$metadataKey] = (int) $user[$sourceKey];
+            }
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (isset($metadata['followers'])) {
+            $summary['Followers'] = (string) $metadata['followers'];
+        }
+        if (isset($metadata['karma'])) {
+            $summary['Karma'] = (string) $metadata['karma'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = $metadata['bio'];
+        }
+        if (is_string($metadata['created_at'] ?? null) && $metadata['created_at'] !== '') {
+            $summary['Created'] = $metadata['created_at'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

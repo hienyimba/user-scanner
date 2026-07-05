@@ -81,7 +81,13 @@ final class VedantuValidator extends BaseGeneratedValidator
             $data = $response->json();
             if (($data['emailExists'] ?? null) === true) {
                 $maskedPhone = $data['phone'] ?? null;
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $maskedPhone ? 'Phone: ' . $maskedPhone : null, mode: $this->mode(), key: $this->key());
+                $extra = $maskedPhone ? $this->metadataSummary(['Masked phone' => $maskedPhone]) : '';
+                $metadata = ['public_email' => $target, 'sources' => ['api_json']];
+                if (is_string($maskedPhone) && $maskedPhone !== '') {
+                    $metadata['phone'] = $maskedPhone;
+                }
+
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
             }
             if (($data['emailExists'] ?? null) === false) {
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());

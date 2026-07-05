@@ -15,6 +15,8 @@ final class ScannerEngineService
         private readonly iterable $validators,
         private readonly ProxyManagerService $proxyManager,
         private readonly PatternExpanderService $patternExpander,
+        private readonly MetadataEnrichmentService $metadataEnrichment,
+        private readonly MetadataCapabilityService $metadataCapability,
     ) {
     }
 
@@ -100,6 +102,13 @@ final class ScannerEngineService
                 'url' => $validator->siteUrl(),
                 'loud' => $this->isLoud($validator->siteName(), $mode),
                 'nsfw' => $isNsfw,
+                'metadata_capability_level' => $this->metadataCapability->forModule($mode, $validator->key())['level'] ?? 1,
+                'metadata_capability_strategy' => $this->metadataCapability->forModule($mode, $validator->key())['strategy'] ?? 'unknown',
+                'metadata_capability_notes' => $this->metadataCapability->forModule($mode, $validator->key())['notes'] ?? 'No capability audit entry found',
+                'metadata_validated_level' => $this->metadataCapability->forModule($mode, $validator->key())['validated_level'] ?? null,
+                'metadata_validated_at' => $this->metadataCapability->forModule($mode, $validator->key())['validated_at'] ?? null,
+                'metadata_validated_targets' => $this->metadataCapability->forModule($mode, $validator->key())['validated_targets'] ?? [],
+                'metadata_validated_notes' => $this->metadataCapability->forModule($mode, $validator->key())['validated_notes'] ?? null,
             ];
         }
 
@@ -184,7 +193,7 @@ final class ScannerEngineService
     {
         $autoSkipReason = $this->autoSkipReason($validator->key(), $mode);
         if ($autoSkipReason !== null) {
-            return new ScanResult(
+            return $this->metadataEnrichment->enrich(new ScanResult(
                 target: $target,
                 category: strtolower($validator->category()),
                 siteName: $validator->siteName(),
@@ -193,11 +202,11 @@ final class ScannerEngineService
                 reason: $autoSkipReason,
                 mode: $mode,
                 key: $validator->key(),
-            );
+            ), $validator, $options);
         }
 
         if (!(bool) ($options['allow_loud'] ?? false) && $this->isLoud($validator->siteName(), $mode)) {
-            return new ScanResult(
+            return $this->metadataEnrichment->enrich(new ScanResult(
                 target: $target,
                 category: strtolower($validator->category()),
                 siteName: $validator->siteName(),
@@ -206,23 +215,42 @@ final class ScannerEngineService
                 reason: 'Notifies the target by forgot password email or similar',
                 mode: $mode,
                 key: $validator->key(),
-            );
+            ), $validator, $options);
         }
 
         $proxy = Arr::get($options, 'use_proxy') ? $this->proxyManager->next() : null;
         if (array_key_exists('proxy', $options)) {
-            $proxy = is_string($options['proxy']) && $options['proxy'] !== '' ? $options['proxy'] : null;
+            $proxy = is_string($options['proxy']) && $options['proxy'] !== ''
+                ? $this->proxyManager->resolve($options['proxy'])
+                : null;
         }
         $rawResult = $validator->check($target, [
             ...$options,
             'proxy' => $proxy,
         ]);
 
-        return ScanResult::fromArray([
-            ...$rawResult->toArray(),
+        $normalized = ScanResult::fromArray([
+            'target' => $rawResult->target,
+            'category' => $rawResult->category,
+            'site_name' => $rawResult->siteName,
+            'url' => $rawResult->url,
             'status' => $this->normalizeStatus($mode, $rawResult->status),
+            'reason' => $rawResult->reason,
+            'extra' => $rawResult->extra,
             'mode' => $mode,
             'key' => $validator->key(),
+            'platform' => $rawResult->platform,
+            'normalized_status' => $rawResult->normalizedStatus,
+            'profile_url' => $rawResult->profileUrl,
+            'confidence' => $rawResult->confidence,
+            'metadata' => $rawResult->metadata,
+            'external_links' => $rawResult->externalLinks,
+            'error' => $rawResult->error,
+        ]);
+
+        return $this->metadataEnrichment->enrich($normalized, $validator, [
+            ...$options,
+            'proxy' => $proxy,
         ]);
     }
 

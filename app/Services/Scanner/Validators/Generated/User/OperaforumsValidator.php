@@ -67,4 +67,109 @@ final class OperaforumsValidator extends BaseGeneratedValidator
 
         return ['Error', 'Unexpected response status: ' . $status];
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $this->stringValue($data['username'] ?? null) ?? $target,
+            'sources' => ['api_json'],
+        ];
+
+        $location = $this->stringValue($data['location'] ?? null);
+        if ($location !== null) {
+            $metadata['location'] = $location;
+        }
+
+        $createdAt = $this->normalizeDateValue($data['joindateISO'] ?? null);
+        if ($createdAt !== null) {
+            $metadata['created_at'] = $createdAt;
+        }
+
+        $reputation = $this->intValue($data['reputation'] ?? null);
+        if ($reputation !== null) {
+            $metadata['reputation'] = $reputation;
+        }
+
+        $profileViews = $this->intValue($data['profileviews'] ?? null);
+        if ($profileViews !== null) {
+            $metadata['profile_views'] = $profileViews;
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['created_at'])) {
+            $summary['Joined At'] = (string) $metadata['created_at'];
+        }
+        if (isset($metadata['reputation'])) {
+            $summary['Reputation'] = (string) $metadata['reputation'];
+        }
+        if (isset($metadata['profile_views'])) {
+            $summary['Profile Views'] = (string) $metadata['profile_views'];
+        }
+        if (is_string($metadata['location'] ?? null) && $metadata['location'] !== '') {
+            $summary['Location'] = $metadata['location'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
+
+    private function stringValue(mixed $value): ?string
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $string = trim((string) $value);
+
+        return $string !== '' ? $string : null;
+    }
+
+    private function intValue(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    private function normalizeDateValue(mixed $value): ?string
+    {
+        $date = $this->stringValue($value);
+        if ($date === null) {
+            return null;
+        }
+
+        try {
+            return (new \DateTimeImmutable($date))->format(\DateTimeInterface::ATOM);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
 }

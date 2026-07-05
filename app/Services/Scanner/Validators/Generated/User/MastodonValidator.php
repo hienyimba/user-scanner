@@ -31,7 +31,7 @@ final class MastodonValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://mastodon.social/@';
+        return 'https://mastodon.social/@{user}';
     }
 
     protected function requestMethod(): string
@@ -115,5 +115,148 @@ final class MastodonValidator extends BaseGeneratedValidator
         }
 
         return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        $fallback = parent::buildStructuredMetadata($response, $target, $status);
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return $fallback;
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return $fallback;
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => $this->mergeSources($fallback['sources'] ?? [], ['api_json']),
+        ];
+
+        $id = $this->cleanString($data['id'] ?? null);
+        if ($id !== null) {
+            $metadata['mastodon_id'] = $id;
+        }
+
+        $displayName = $this->cleanString($data['display_name'] ?? null);
+        if ($displayName !== null) {
+            $metadata['display_name'] = $displayName;
+        }
+
+        $bio = $this->cleanHtmlText($data['note'] ?? null);
+        if ($bio !== null) {
+            $metadata['bio'] = $bio;
+        }
+
+        $followers = $this->normalizeInteger($data['followers_count'] ?? null);
+        if ($followers !== null) {
+            $metadata['followers'] = $followers;
+        }
+
+        $following = $this->normalizeInteger($data['following_count'] ?? null);
+        if ($following !== null) {
+            $metadata['following'] = $following;
+        }
+
+        $postsCount = $this->normalizeInteger($data['statuses_count'] ?? null);
+        if ($postsCount !== null) {
+            $metadata['posts_count'] = $postsCount;
+        }
+
+        $avatarUrl = $this->cleanString($data['avatar'] ?? null);
+        if ($avatarUrl !== null) {
+            $metadata['avatar_url'] = $avatarUrl;
+        }
+
+        return array_replace($fallback, $metadata);
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = $metadata['bio'];
+        }
+        if (isset($metadata['followers'])) {
+            $summary['Followers'] = (string) $metadata['followers'];
+        }
+        if (isset($metadata['following'])) {
+            $summary['Following'] = (string) $metadata['following'];
+        }
+        if (isset($metadata['posts_count'])) {
+            $summary['Posts'] = (string) $metadata['posts_count'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
+
+    private function cleanString(mixed $value): ?string
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $normalized = trim((string) $value);
+
+        return $normalized !== '' ? $normalized : null;
+    }
+
+    private function cleanHtmlText(mixed $value): ?string
+    {
+        $html = $this->cleanString($value);
+        if ($html === null) {
+            return null;
+        }
+
+        $text = trim(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5));
+
+        return $text !== '' ? preg_replace('/\s+/', ' ', $text) : null;
+    }
+
+    private function normalizeInteger(mixed $value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/', $value) === 1) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    /**
+     * @param mixed $existing
+     * @param array<int, string> $newSources
+     * @return array<int, string>
+     */
+    private function mergeSources(mixed $existing, array $newSources): array
+    {
+        $sources = is_array($existing) ? $existing : [];
+        $merged = [];
+
+        foreach (array_merge($sources, $newSources) as $source) {
+            if (!is_string($source) || trim($source) === '') {
+                continue;
+            }
+
+            $merged[] = trim($source);
+        }
+
+        return array_values(array_unique($merged));
     }
 }

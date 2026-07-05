@@ -157,6 +157,13 @@ return [
         'poll_interval_ms' => (int) env('SCANNER_POLL_INTERVAL_MS', 2000),
     ],
 
+    'metadata' => [
+        'fetch_profile_html' => env('SCANNER_METADATA_FETCH_PROFILE_HTML', true),
+        'request_timeout_seconds' => (int) env('SCANNER_METADATA_TIMEOUT_SECONDS', 8),
+        'max_html_bytes' => (int) env('SCANNER_METADATA_MAX_HTML_BYTES', 262144),
+        'max_external_links' => (int) env('SCANNER_METADATA_MAX_EXTERNAL_LINKS', 10),
+    ],
+
     'loud_modules' => [
         'username' => [],
         'email' => [
@@ -187,16 +194,13 @@ return [
             'appletv' => 'Request timeout',
             'letterboxd' => 'Unexpected response structure',
             'alison' => 'Alison signup now appears to be JS-shell / reCAPTCHA gated, so the old non-interactive email check flow is no longer parsable',
-            'allen' => 'Blocked by Allen WAF (403)',
             'foxnews' => 'Fox legacy status endpoint returned found=false for a real account; the old non-interactive signal is no longer reliable',
-            'indiatimes' => 'Connection timed out! maybe region blocks',
             'nytimes' => 'NYT took too long to answer',
             'anydo' => 'Connection timed out! maybe region blocks',
             'deviantart' => 'Connection timed out! maybe region blocks',
             'amazon' => 'CAPTCHA triggered (IP may be flagged)',
             'classmates' => 'Caught by WAF (403) during Handshake',
             'marca' => 'Request timeout',
-            'vivino' => 'Registered - Auto Registers people',
             'flirtbate' => 'Notifies the target by forgot password email or similar',
             'sexvid' => 'Notifies the target by forgot password email or similar',
             'leetcode' => 'Notifies the target by forgot password email or similar',
@@ -214,4 +218,5 @@ return [
         App\Services\Scanner\Validators\User\GithubValidator::class,
         App\Services\Scanner\Validators\User\XValidator::class,
     ],
+
 ];

@@ -4,10 +4,18 @@ declare(strict_types=1);
 
 namespace App\Support;
 
+use App\Contracts\ValidatorContract;
+use App\DTO\ScanResult;
+use App\Services\Scanner\MetadataEnrichmentService;
 use Illuminate\Support\Facades\DB;
 
 final class ScanRunStore
 {
+    public function __construct(
+        private readonly MetadataEnrichmentService $metadataEnrichment,
+    ) {
+    }
+
     /**
      * @param array<int, string> $targets
      * @param array<string, mixed> $options
@@ -91,6 +99,13 @@ final class ScanRunStore
                 'extra' => (string) ($result['extra'] ?? ''),
                 'mode' => (string) ($result['mode'] ?? ''),
                 'key' => (string) ($result['key'] ?? ''),
+                'platform' => (string) ($result['platform'] ?? ($result['key'] ?? '')),
+                'normalized_status' => (string) ($result['normalized_status'] ?? ''),
+                'profile_url' => $this->nullableString($result['profile_url'] ?? null),
+                'confidence' => $this->nullableFloat($result['confidence'] ?? null),
+                'metadata' => $this->encodeJson($result['metadata'] ?? []),
+                'external_links' => $this->encodeJson($result['external_links'] ?? []),
+                'error' => $this->nullableString($result['error'] ?? null),
                 'target_index' => $targetIndex,
                 'validator_index' => $validatorIndex,
                 'created_at' => now(),
@@ -154,6 +169,13 @@ final class ScanRunStore
                     'extra' => (string) ($result['extra'] ?? ''),
                     'mode' => (string) ($result['mode'] ?? ''),
                     'key' => (string) ($result['key'] ?? ''),
+                    'platform' => (string) ($result['platform'] ?? ($result['key'] ?? '')),
+                    'normalized_status' => (string) ($result['normalized_status'] ?? ''),
+                    'profile_url' => $this->nullableString($result['profile_url'] ?? null),
+                    'confidence' => $this->nullableFloat($result['confidence'] ?? null),
+                    'metadata' => $this->encodeJson($result['metadata'] ?? []),
+                    'external_links' => $this->encodeJson($result['external_links'] ?? []),
+                    'error' => $this->nullableString($result['error'] ?? null),
                     'target_index' => $targetIndex,
                     'validator_index' => $validatorIndex,
                     'created_at' => now(),
@@ -230,19 +252,7 @@ final class ScanRunStore
             $query->whereRaw('lower(category) = ?', [strtolower($category)]);
         }
 
-        return array_map(static function ($row): array {
-            return [
-                'target' => (string) $row->target,
-                'category' => strtolower((string) ($row->category ?? '')),
-                'site_name' => (string) ($row->site_name ?? ''),
-                'url' => (string) ($row->url ?? ''),
-                'status' => (string) ($row->status ?? ''),
-                'reason' => (string) ($row->reason ?? ''),
-                'extra' => (string) ($row->extra ?? ''),
-                'mode' => (string) ($row->mode ?? ''),
-                'key' => (string) ($row->key ?? ''),
-            ];
-        }, $query->get()->all());
+        return array_map(fn ($row): array => $this->normalizeStoredRow($row), $query->get()->all());
     }
 
     /**
@@ -296,5 +306,107 @@ final class ScanRunStore
         $decoded = json_decode($value, true);
 
         return is_array($decoded) ? $decoded : [];
+    }
+
+    private function encodeJson(mixed $value): ?string
+    {
+        if (!is_array($value) || $value === []) {
+            return null;
+        }
+
+        return json_encode($value, JSON_THROW_ON_ERROR);
+    }
+
+    private function nullableString(mixed $value): ?string
+    {
+        if (!is_scalar($value)) {
+            return null;
+        }
+
+        $string = trim((string) $value);
+
+        return $string !== '' ? $string : null;
+    }
+
+    private function nullableFloat(mixed $value): ?float
+    {
+        return is_numeric($value) ? (float) $value : null;
+    }
+
+    /**
+     * @param object $row
+     * @return array<string, mixed>
+     */
+    private function normalizeStoredRow(object $row): array
+    {
+        $raw = [
+            'target' => (string) ($row->target ?? ''),
+            'category' => strtolower((string) ($row->category ?? '')),
+            'site_name' => (string) ($row->site_name ?? ''),
+            'url' => (string) ($row->url ?? ''),
+            'status' => (string) ($row->status ?? ''),
+            'reason' => (string) ($row->reason ?? ''),
+            'extra' => (string) ($row->extra ?? ''),
+            'mode' => (string) ($row->mode ?? ''),
+            'key' => (string) ($row->key ?? ''),
+            'platform' => (string) ($row->platform ?? ($row->key ?? '')),
+            'normalized_status' => (string) ($row->normalized_status ?? ''),
+            'profile_url' => $this->nullableString($row->profile_url ?? null),
+            'confidence' => $this->nullableFloat($row->confidence ?? null),
+            'metadata' => $this->decodeJsonAssoc($row->metadata ?? null),
+            'external_links' => $this->decodeJsonArray($row->external_links ?? null),
+            'error' => $this->nullableString($row->error ?? null),
+        ];
+
+        $validator = new class(
+            key: (string) ($row->key ?? ''),
+            category: strtolower((string) ($row->category ?? '')),
+            mode: (string) ($row->mode ?? ''),
+            siteName: (string) ($row->site_name ?? ''),
+            siteUrl: (string) ($row->url ?? ''),
+        ) implements ValidatorContract {
+            public function __construct(
+                private readonly string $key,
+                private readonly string $category,
+                private readonly string $mode,
+                private readonly string $siteName,
+                private readonly string $siteUrl,
+            ) {
+            }
+
+            public function key(): string
+            {
+                return $this->key;
+            }
+
+            public function category(): string
+            {
+                return $this->category;
+            }
+
+            public function mode(): string
+            {
+                return $this->mode;
+            }
+
+            public function siteName(): string
+            {
+                return $this->siteName;
+            }
+
+            public function siteUrl(): string
+            {
+                return $this->siteUrl;
+            }
+
+            public function check(string $target, array $options = []): ScanResult
+            {
+                throw new \LogicException('Stored result validator is read-only.');
+            }
+        };
+
+        return $this->metadataEnrichment
+            ->enrich(ScanResult::fromArray($raw), $validator, ['enrich_metadata' => false])
+            ->toArray();
     }
 }

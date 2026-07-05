@@ -165,6 +165,79 @@ final class ConcurrentCategoryScanTest extends TestCase
         $this->assertSame('completed', $run['status']);
     }
 
+    public function test_stored_legacy_rows_are_rehydrated_into_normalized_metadata_shape_for_store_and_json_export(): void
+    {
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: [],
+            expandedTargets: ['alice'],
+            validatorCount: 2,
+            expectedResults: 2,
+            selectedValidatorKeys: ['alpha', 'beta'],
+        );
+
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Alpha',
+            'url' => 'https://alpha.test/users/{user}',
+            'status' => 'Found',
+            'reason' => '',
+            'extra' => '',
+            'mode' => 'username',
+            'key' => 'alpha',
+        ], 0, 0);
+
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Beta',
+            'url' => 'https://beta.test/users/{user}',
+            'status' => 'Error',
+            'reason' => 'beta: anti-bot challenge detected',
+            'extra' => '',
+            'mode' => 'username',
+            'key' => 'beta',
+        ], 0, 1);
+
+        $results = collect($store->filteredResults($runId))->keyBy('key');
+
+        $found = $results['alpha'];
+        $this->assertSame('found', $found['normalized_status']);
+        $this->assertSame('alpha', $found['platform']);
+        $this->assertSame('https://alpha.test/users/alice', $found['profile_url']);
+        $this->assertArrayHasKey('display_name', $found['metadata']);
+        $this->assertSame('alice', $found['metadata']['username']);
+        $this->assertSame('found', $found['metadata']['status_detail']);
+        $this->assertSame(2, $found['metadata']['observed_metadata_level']);
+        $this->assertGreaterThan(0.8, (float) $found['confidence']);
+        $this->assertContains('profile_url', $found['normalized']['evidence']);
+
+        $error = $results['beta'];
+        $this->assertSame('error', $error['normalized_status']);
+        $this->assertSame('anti_bot', $error['metadata']['status_detail']);
+        $this->assertSame(0, $error['metadata']['observed_metadata_level']);
+        $this->assertSame('beta: anti-bot challenge detected', $error['error']);
+        $this->assertSame('beta: anti-bot challenge detected', $error['normalized']['error']);
+
+        $response = $this->getJson("/api/scanner/runs/{$runId}/export/json");
+
+        $response->assertOk()->assertJson([
+            'ok' => true,
+            'run_id' => $runId,
+            'count' => 2,
+        ]);
+
+        $exported = collect($response->json('results'))->keyBy('key');
+        $this->assertSame('found', $exported['alpha']['normalized_status']);
+        $this->assertSame('https://alpha.test/users/alice', $exported['alpha']['profile_url']);
+        $this->assertSame('anti_bot', $exported['beta']['metadata']['status_detail']);
+    }
+
     public function test_failed_job_marks_run_complete_even_if_it_never_appended_normally(): void
     {
         $store = app(ScanRunStore::class);

@@ -64,4 +64,79 @@ final class ParagraphValidator extends BaseGeneratedValidator
 
         return ['Available', ''];
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        if (isset($data['id']) && is_numeric($data['id'])) {
+            $metadata['paragraph_id'] = (int) $data['id'];
+        } elseif (isset($data['id'])) {
+            $metadata['paragraph_id'] = (string) $data['id'];
+        }
+
+        $name = trim((string) ($data['name'] ?? ''));
+        if ($name !== '') {
+            $metadata['display_name'] = $name;
+        }
+
+        $createdAt = trim((string) ($data['createdAt'] ?? ''));
+        if ($createdAt !== '') {
+            try {
+                $metadata['created_at'] = (new \DateTimeImmutable($createdAt))
+                    ->setTimezone(new \DateTimeZone('UTC'))
+                    ->format(DATE_ATOM);
+            } catch (\Throwable) {
+                $metadata['created_at'] = $createdAt;
+            }
+        }
+
+        if (isset($data['userId']) && is_numeric($data['userId'])) {
+            $metadata['user_id'] = (int) $data['userId'];
+        } elseif (isset($data['userId'])) {
+            $metadata['user_id'] = (string) $data['userId'];
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['paragraph_id'])) {
+            $summary['ID'] = (string) $metadata['paragraph_id'];
+        }
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['created_at'] ?? null) && $metadata['created_at'] !== '') {
+            $summary['Created'] = $metadata['created_at'];
+        }
+        if (isset($metadata['user_id'])) {
+            $summary['User ID'] = (string) $metadata['user_id'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
 }

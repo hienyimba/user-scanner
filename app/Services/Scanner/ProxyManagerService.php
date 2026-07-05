@@ -55,6 +55,11 @@ final class ProxyManagerService
         return $this->resolveProxyUrl($this->proxies[$index]);
     }
 
+    public function resolve(string $rawProxy): string
+    {
+        return $this->resolveProxyUrl($rawProxy);
+    }
+
     public function count(): int
     {
         return count($this->proxies);

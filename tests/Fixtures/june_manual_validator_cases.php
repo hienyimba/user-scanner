@@ -7,7 +7,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -55,7 +60,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -77,7 +87,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -99,7 +114,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -147,7 +167,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -169,7 +194,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -229,7 +259,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -251,7 +286,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -305,7 +345,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -327,7 +372,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -424,7 +474,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -446,7 +501,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -558,7 +618,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -580,7 +645,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -668,7 +738,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -690,7 +765,12 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'user' => [
+                        'name' => 'Alice',
+                        'username' => 'alice',
+                    ],
+                ],
             ],
         ],
         'expected' => 'Found',

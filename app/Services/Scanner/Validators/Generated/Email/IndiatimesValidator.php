@@ -61,13 +61,21 @@ final class IndiatimesValidator extends BaseGeneratedValidator
 
             $userStatus = (string) $response->json('data.status');
             if ($userStatus === 'VERIFIED_EMAIL') {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key(), metadata: [
+                    'public_email' => $target,
+                    'email_verification_status' => 'verified',
+                    'sources' => ['api_json'],
+                ]);
             }
             if ($userStatus === 'UNREGISTERED_EMAIL') {
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
             }
             if ($userStatus === 'UNVERIFIED_EMAIL') {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', 'However email is not verified on the site', mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', 'However email is not verified on the site', mode: $this->mode(), key: $this->key(), metadata: [
+                    'public_email' => $target,
+                    'email_verification_status' => 'unverified',
+                    'sources' => ['api_json'],
+                ]);
             }
 
             return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected response body, report it on github', mode: $this->mode(), key: $this->key());

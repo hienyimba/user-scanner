@@ -71,7 +71,6 @@ final class PackagistValidator extends BaseGeneratedValidator
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
-        $body = $response->body();
         if ($status === 200) {
             return ['Taken', ''];
         }
@@ -81,5 +80,61 @@ final class PackagistValidator extends BaseGeneratedValidator
         }
 
         return ['Error', 'Unexpected status: ' . $status];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $html = $response->body();
+        $metadata = [
+            'username' => $target,
+            'sources' => ['profile_html'],
+        ];
+
+        if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $html, $matches) === 1) {
+            $name = trim(str_replace('- Packagist', '', html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5)));
+            if ($name !== '') {
+                $metadata['display_name'] = $name;
+            }
+        }
+
+        if (preg_match_all('#/packages/([^/]+/[^/"]+)#i', $html, $matches) !== false) {
+            $packages = array_values(array_unique(array_filter(
+                array_map(static fn (string $value): string => trim($value), $matches[1]),
+                static fn (string $value): bool => $value !== '' && !str_contains($value, 'submit')
+            )));
+
+            if ($packages !== []) {
+                $metadata['packages_count'] = count($packages);
+                $metadata['posts_count'] = count($packages);
+            }
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (isset($metadata['packages_count'])) {
+            $summary['Packages'] = (string) $metadata['packages_count'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\RunScanRequest;
+use App\Services\Scanner\MetadataCapabilityService;
 use App\Services\Scanner\QueuedScanService;
 use App\Services\Scanner\ScannerEngineService;
 use Illuminate\Http\JsonResponse;
@@ -37,7 +38,7 @@ final class ScanController extends Controller
         ]);
     }
 
-    public function modules(string $mode, ScannerEngineService $engine): JsonResponse
+    public function modules(string $mode, ScannerEngineService $engine, MetadataCapabilityService $metadataCapability): JsonResponse
     {
         abort_unless(in_array($mode, ['username', 'email'], true), 404);
 
@@ -46,6 +47,7 @@ final class ScanController extends Controller
         return response()->json([
             'ok' => true,
             'mode' => $mode,
+            'metadata_summary' => $metadataCapability->summary(),
             'categories' => $engine->listCategories($mode, $noNsfw),
             'modules' => $engine->listModules($mode, $noNsfw),
         ]);

@@ -120,13 +120,14 @@ final class QueuedScanService
     public function prepareOptions(array $options): array
     {
         $prepared = $options;
+        $disableProxy = (bool) Arr::get($prepared, 'disable_proxy', false);
         $defaultProxyList = implode(PHP_EOL, config('scanner.proxy_list', []));
 
-        if (empty($prepared['proxy_list']) && $defaultProxyList !== '') {
+        if (!$disableProxy && empty($prepared['proxy_list']) && $defaultProxyList !== '') {
             $prepared['proxy_list'] = $defaultProxyList;
         }
 
-        if (!empty($prepared['proxy_list'])) {
+        if (!$disableProxy && !empty($prepared['proxy_list'])) {
             $this->proxyManager->loadFromText((string) $prepared['proxy_list']);
             if (!empty($prepared['validate_proxies'])) {
                 $this->proxyManager->validateWorking();
@@ -136,11 +137,18 @@ final class QueuedScanService
             $prepared['use_proxy'] = !empty($prepared['use_proxy']) || trim((string) $prepared['proxy_list']) !== '';
         }
 
+        if ($disableProxy) {
+            $prepared['use_proxy'] = false;
+            $prepared['proxy'] = null;
+            $prepared['proxy_list'] = '';
+        }
+
         $prepared['allow_loud'] = (bool) Arr::get($prepared, 'allow_loud', false);
         $prepared['no_nsfw'] = (bool) Arr::get($prepared, 'no_nsfw', false);
         $prepared['only_found'] = (bool) Arr::get($prepared, 'only_found', false);
         $prepared['verbose'] = (bool) Arr::get($prepared, 'verbose', false);
         $prepared['validate_proxies'] = (bool) Arr::get($prepared, 'validate_proxies', false);
+        $prepared['disable_proxy'] = $disableProxy;
         $prepared['use_proxy'] = (bool) Arr::get($prepared, 'use_proxy', false);
         $prepared['delay'] = (float) Arr::get($prepared, 'delay', 0);
         $prepared['stop'] = (int) Arr::get($prepared, 'stop', 100);

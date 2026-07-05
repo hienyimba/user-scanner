@@ -121,15 +121,52 @@ final class WalmartValidator extends BaseGeneratedValidator
             $loginOptions = $response->json('data.getLoginOptions.loginOptions') ?? [];
             $errors = $response->json('data.getLoginOptions.errors') ?? [];
             $pref = (string) ($loginOptions['signInPreference'] ?? '');
+            $maskedPhoneLastFour = (string) ($loginOptions['loginPhoneLastFour'] ?? data_get($loginOptions, 'maskedPhoneNumberDetails.loginPhoneLastFour', ''));
+            $maskedPhone = $maskedPhoneLastFour !== '' ? '***' . $maskedPhoneLastFour : null;
+            $extra = $this->metadataSummary([
+                'Sign-in preference' => $pref !== '' ? $pref : null,
+                'Masked email' => $loginOptions['loginMaskedEmailId'] ?? null,
+                'Masked phone' => $maskedPhone,
+                'Passkey on profile' => $loginOptions['hasPasskeyOnProfile'] ?? null,
+                'Account domain' => $loginOptions['accountDomain'] ?? null,
+                'Residency country' => data_get($loginOptions, 'residencyRegion.residencyCountryCode'),
+            ]);
+            $metadata = [
+                'public_email' => $target,
+                'sources' => ['api_json'],
+            ];
+            if ($pref !== '') {
+                $metadata['sign_in_preference'] = $pref;
+            }
+            if (is_string($loginOptions['loginMaskedEmailId'] ?? null) && trim((string) $loginOptions['loginMaskedEmailId']) !== '') {
+                $metadata['masked_email'] = trim((string) $loginOptions['loginMaskedEmailId']);
+            }
+            if ($maskedPhone !== null) {
+                $metadata['masked_phone'] = $maskedPhone;
+            }
+            if (array_key_exists('hasPasskeyOnProfile', $loginOptions) && is_bool($loginOptions['hasPasskeyOnProfile'])) {
+                $metadata['has_passkey_on_profile'] = (bool) $loginOptions['hasPasskeyOnProfile'];
+            }
+            if (is_string($loginOptions['accountDomain'] ?? null) && trim((string) $loginOptions['accountDomain']) !== '') {
+                $metadata['account_domain'] = trim((string) $loginOptions['accountDomain']);
+            }
+            $residencyCountry = data_get($loginOptions, 'residencyRegion.residencyCountryCode');
+            if (is_scalar($residencyCountry) && trim((string) $residencyCountry) !== '') {
+                $metadata['residency_country'] = trim((string) $residencyCountry);
+            }
 
             if (in_array($pref, ['PASSWORD', 'CHOICE'], true)) {
                 foreach ($errors as $error) {
                     if (($error['code'] ?? null) === 'COMPROMISED') {
-                        return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', 'Account flagged as compromised', mode: $this->mode(), key: $this->key());
+                        $metadata['account_status'] = 'compromised';
+
+                        return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', 'Account flagged as compromised', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
                     }
                 }
 
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key());
+                $metadata['account_status'] = 'active';
+
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
             }
             if ($pref === 'CREATE') {
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());

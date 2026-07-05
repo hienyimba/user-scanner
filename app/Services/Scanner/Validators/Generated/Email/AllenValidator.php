@@ -76,8 +76,15 @@ final class AllenValidator extends BaseGeneratedValidator
                     }
                 }
 
-                $extra = $maskedPhone !== null && $maskedPhone !== '' ? 'Phone: +91' . $maskedPhone : null;
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key());
+                $metadata = ['public_email' => $target, 'sources' => ['api_json']];
+                $extra = $maskedPhone !== null && $maskedPhone !== ''
+                    ? $this->metadataSummary(['Masked phone' => '+91' . $maskedPhone])
+                    : '';
+                if ($maskedPhone !== null && $maskedPhone !== '') {
+                    $metadata['phone'] = '+91' . $maskedPhone;
+                }
+
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
             }
             if (str_contains($reason, 'Invalid email')) {
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());

@@ -68,4 +68,82 @@ final class GiteeValidator extends BaseGeneratedValidator
 
     return ['Error', 'Unexpected response body'];
 }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data) || !isset($data['id'])) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => trim((string) ($data['login'] ?? '')) ?: $target,
+            'sources' => ['api_json'],
+        ];
+
+        $metadata['gitee_id'] = is_numeric($data['id']) ? (int) $data['id'] : (string) $data['id'];
+
+        $name = trim((string) ($data['name'] ?? ''));
+        if ($name !== '') {
+            $metadata['display_name'] = $name;
+        }
+
+        $bio = trim((string) ($data['bio'] ?? ''));
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
+        }
+
+        $blog = trim((string) ($data['blog'] ?? ''));
+        if ($blog !== '') {
+            $metadata['website_url'] = $blog;
+            $metadata['external_links'] = [$blog];
+        }
+
+        foreach ([
+            'public_repos' => 'posts_count',
+            'followers' => 'followers',
+            'following' => 'following',
+        ] as $sourceKey => $metadataKey) {
+            if (isset($data[$sourceKey]) && is_numeric($data[$sourceKey])) {
+                $metadata[$metadataKey] = (int) $data[$sourceKey];
+            }
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['gitee_id'])) {
+            $summary['ID'] = (string) $metadata['gitee_id'];
+        }
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = $metadata['bio'];
+        }
+        if (isset($metadata['followers'])) {
+            $summary['Followers'] = (string) $metadata['followers'];
+        }
+        if (isset($metadata['following'])) {
+            $summary['Following'] = (string) $metadata['following'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
 }

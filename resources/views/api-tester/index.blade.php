@@ -201,6 +201,12 @@
         return 'bg-slate-100 text-slate-700';
     }
 
+    function formatExtra(value) {
+        const text = escapeHtml(value).trim();
+
+        return text ? `<div class="whitespace-pre-line">${text}</div>` : '';
+    }
+
     function refillCategories(items) {
         const current = categoryEl.value;
         categoryEl.innerHTML = '<option value="">All categories</option>';
@@ -281,7 +287,7 @@
                                     <th class="text-left px-4 py-3">Site</th>
                                     <th class="text-left px-4 py-3">Status</th>
                                     <th class="text-left px-4 py-3">Reason</th>
-                                    <th class="text-left px-4 py-3">Extra</th>
+                                    <th class="text-left px-4 py-3">Account Metadata</th>
                                 </tr>
                             </thead>
                             <tbody class="divide-y divide-slate-100">
@@ -293,7 +299,7 @@
                                         </td>
                                         <td class="px-4 py-3"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ${statusClass(row.status)}">${escapeHtml(row.status)}</span></td>
                                         <td class="px-4 py-3 text-slate-600">${escapeHtml(row.reason)}</td>
-                                        <td class="px-4 py-3 text-slate-600">${escapeHtml(row.extra)}</td>
+                                        <td class="px-4 py-3 text-slate-600">${formatExtra(row.extra)}</td>
                                     </tr>
                                 `).join('')}
                             </tbody>

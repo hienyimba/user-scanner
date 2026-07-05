@@ -147,6 +147,22 @@ final class ProxyPoolIntegrationTest extends TestCase
         $response->assertDontSee('p@ss=word');
     }
 
+    public function test_prepare_options_can_disable_default_proxy_pool_for_direct_diagnostics(): void
+    {
+        $service = app(QueuedScanService::class);
+
+        $prepared = $service->prepareOptions([
+            'disable_proxy' => true,
+            'proxy' => 'disp.oxylabs.io:8008',
+            'use_proxy' => true,
+        ]);
+
+        $this->assertTrue($prepared['disable_proxy']);
+        $this->assertFalse($prepared['use_proxy']);
+        $this->assertSame('', $prepared['proxy_list']);
+        $this->assertNull($prepared['proxy']);
+    }
+
     private function freshProxyManager(): ProxyManagerService
     {
         $this->app->forgetInstance(ProxyManagerService::class);

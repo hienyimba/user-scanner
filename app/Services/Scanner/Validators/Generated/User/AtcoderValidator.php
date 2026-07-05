@@ -70,15 +70,14 @@ final class AtcoderValidator extends BaseGeneratedValidator
 
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        $status = $response->status();
         $body = $response->body();
-        $finalUrl = (string) ($response->effectiveUri() ?? '');
+        $normalizedBody = strtolower(trim($body));
 
-        if ($body.strip().lower() == "true") {
+        if ($normalizedBody === 'true') {
             return ['Taken', ''];
         }
 
-        if ($body.strip().lower() == "false") {
+        if ($normalizedBody === 'false') {
             return ['Available', ''];
         }
 

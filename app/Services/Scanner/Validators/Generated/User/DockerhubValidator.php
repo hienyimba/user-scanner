@@ -31,7 +31,7 @@ final class DockerhubValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://hub.docker.com/u';
+        return 'https://hub.docker.com/u/{user}';
     }
 
     protected function requestMethod(): string
@@ -115,5 +115,92 @@ final class DockerhubValidator extends BaseGeneratedValidator
         }
 
         return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        if (isset($data['id']) && is_numeric($data['id'])) {
+            $metadata['dockerhub_id'] = (int) $data['id'];
+        } elseif (isset($data['id'])) {
+            $metadata['dockerhub_id'] = trim((string) $data['id']);
+        }
+
+        $fullName = trim((string) ($data['full_name'] ?? ''));
+        if ($fullName !== '') {
+            $metadata['display_name'] = $fullName;
+        }
+
+        $company = trim((string) ($data['company'] ?? ''));
+        if ($company !== '') {
+            $metadata['company'] = $company;
+        }
+
+        $location = trim((string) ($data['location'] ?? ''));
+        if ($location !== '') {
+            $metadata['location'] = $location;
+        }
+
+        $joined = trim((string) ($data['date_joined'] ?? ''));
+        if ($joined !== '') {
+            try {
+                $metadata['created_at'] = (new \DateTimeImmutable($joined))
+                    ->setTimezone(new \DateTimeZone('UTC'))
+                    ->format(DATE_ATOM);
+            } catch (\Throwable) {
+                $metadata['created_at'] = $joined;
+            }
+        }
+
+        $type = trim((string) ($data['type'] ?? ''));
+        if ($type !== '') {
+            $metadata['account_type'] = $type;
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['dockerhub_id'])) {
+            $summary['ID'] = (string) $metadata['dockerhub_id'];
+        }
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['company'] ?? null) && $metadata['company'] !== '') {
+            $summary['Company'] = $metadata['company'];
+        }
+        if (is_string($metadata['location'] ?? null) && $metadata['location'] !== '') {
+            $summary['Location'] = $metadata['location'];
+        }
+        if (is_string($metadata['account_type'] ?? null) && $metadata['account_type'] !== '') {
+            $summary['Type'] = $metadata['account_type'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

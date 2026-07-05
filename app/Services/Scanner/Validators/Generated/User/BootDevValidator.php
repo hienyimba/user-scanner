@@ -72,7 +72,6 @@ final class BootDevValidator extends BaseGeneratedValidator
     {
         $status = $response->status();
         $body = $response->body();
-        $finalUrl = (string) ($response->effectiveUri() ?? '');
 
         if ($status === 404) {
             return ['Available', ''];
@@ -80,6 +79,10 @@ final class BootDevValidator extends BaseGeneratedValidator
 
         if (str_contains($body, 'User not found')) {
             return ['Available', ''];
+        }
+
+        if ($status === 200 && str_contains($body, '__NUXT__') && str_contains($body, 'publicUser:' . $target)) {
+            return ['Taken', ''];
         }
 
         return ['Error', 'Unexpected response body'];

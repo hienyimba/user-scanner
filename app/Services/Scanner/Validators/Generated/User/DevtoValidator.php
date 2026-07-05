@@ -31,7 +31,7 @@ final class DevtoValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://dev.to';
+        return 'https://dev.to/{user}';
     }
 
     protected function requestMethod(): string
@@ -41,7 +41,7 @@ final class DevtoValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://dev.to/{$target}";
+        return 'https://dev.to/api/users/by_username';
     }
 
     protected function followRedirects(): bool
@@ -56,64 +56,102 @@ final class DevtoValidator extends BaseGeneratedValidator
 
     protected function requestHeaders(): array
     {
+        return [];
+    }
+
+    protected function requestQuery(string $target): array
+    {
         return [
-            // No connector-specific headers inferred.
+            'url' => $target,
         ];
     }
 
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        $status = $response->status();
-        $body = strtolower($response->body());
+        return match ($response->status()) {
+            200 => ['Taken', ''],
+            404 => ['Available', ''],
+            default => ['Error', 'Unexpected status: ' . $response->status()],
+        };
+    }
 
-        if ($blocked = $this->detectBlockedOrChallenged($response)) {
-            return $blocked;
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
         }
 
-        $availableStatuses = [404];
-        $takenStatuses = [200];
-        $availableIndicators = [];
-        $takenIndicators = [];
-
-        if ($this->mode() === 'username') {
-            if (in_array($status, $availableStatuses, true)) {
-                return ['Available', ''];
-            }
-            if (in_array($status, $takenStatuses, true)) {
-                return ['Taken', ''];
-            }
-            foreach ($takenIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Taken', ''];
-                }
-            }
-            foreach ($availableIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Available', ''];
-                }
-            }
-
-            return ['Error', $this->key() . ': indeterminate username response (HTTP ' . $status . ')'];
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
         }
 
-        if (in_array($status, $takenStatuses, true)) {
-            return ['Registered', ''];
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        $displayName = trim((string) ($data['name'] ?? ''));
+        if ($displayName !== '') {
+            $metadata['display_name'] = $displayName;
         }
-        if (in_array($status, $availableStatuses, true)) {
-            return ['Not Registered', ''];
+
+        $bio = trim((string) ($data['summary'] ?? ''));
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
         }
-        foreach ($takenIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Registered', ''];
-            }
+
+        $location = trim((string) ($data['location'] ?? ''));
+        if ($location !== '') {
+            $metadata['location'] = $location;
         }
-        foreach ($availableIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Not Registered', ''];
+
+        $joinedAt = trim((string) ($data['joined_at'] ?? ''));
+        if ($joinedAt !== '') {
+            try {
+                $metadata['created_at'] = (new \DateTimeImmutable($joinedAt))
+                    ->setTimezone(new \DateTimeZone('UTC'))
+                    ->format(DATE_ATOM);
+            } catch (\Throwable) {
+                $metadata['created_at'] = $joinedAt;
             }
         }
 
-        return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+        $website = trim((string) ($data['website_url'] ?? ''));
+        if ($website !== '') {
+            $metadata['website_url'] = $website;
+            $metadata['external_links'] = [$website];
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Bio'] = $metadata['bio'];
+        }
+        if (is_string($metadata['location'] ?? null) && $metadata['location'] !== '') {
+            $summary['Location'] = $metadata['location'];
+        }
+        if (is_string($metadata['website_url'] ?? null) && $metadata['website_url'] !== '') {
+            $summary['Website'] = $metadata['website_url'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

@@ -72,12 +72,15 @@ final class HashnodeValidator extends BaseGeneratedValidator
     {
         $status = $response->status();
         $body = $response->body();
-        $finalUrl = (string) ($response->effectiveUri() ?? '');
 
-        if (str_contains($body, 'Available for</h2>')) {
-            return ['Taken', ''];
+        if ($status === 200) {
+            if (str_contains($body, 'Available for</h2>')) {
+                return ['Taken', ''];
+            }
+
+            return ['Available', ''];
         }
 
-        return ['Error', 'Unexpected response body'];
+        return ['Error', 'Unexpected status code ' . $status . ', report it via GitHub issues.'];
     }
 }

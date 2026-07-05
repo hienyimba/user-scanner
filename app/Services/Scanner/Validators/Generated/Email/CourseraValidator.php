@@ -67,7 +67,24 @@ final class CourseraValidator extends BaseGeneratedValidator
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected data type for loginMethods: ' . gettype($methods) . ', report it on github', mode: $this->mode(), key: $this->key());
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), count($methods) > 0 ? 'Registered' : 'Not Registered', '', mode: $this->mode(), key: $this->key());
+            if (count($methods) > 0) {
+                $normalizedMethods = array_values(array_filter(array_map(
+                    static fn (mixed $method): ?string => is_scalar($method) && trim((string) $method) !== '' ? trim((string) $method) : null,
+                    $methods,
+                )));
+                $extra = $this->metadataSummary([
+                    'Login methods' => $normalizedMethods,
+                ]);
+                $metadata = [
+                    'public_email' => $target,
+                    'login_methods' => $normalizedMethods,
+                    'sources' => ['api_json'],
+                ];
+
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
+            }
+
+            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
         } catch (\Throwable $e) {
             $message = strtolower($e->getMessage());
             $reason = str_contains($message, 'timed out')

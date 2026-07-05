@@ -122,10 +122,59 @@ GRAPHQL,
                 if ($available === true) {
                     return ['Available', ''];
                 }
-                if ($available === false) {
-                    return ['Taken', ''];
-                }
-
-                return ['Error', 'Could not parse identifier data'];
+            if ($available === false) {
+                return ['Taken', ''];
             }
+
+            return ['Error', 'Could not parse identifier data'];
+        }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $profile = data_get($response->json(), 'data.identifierAvailable.profileDetails');
+        if (!is_array($profile)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => trim((string) ($profile['username'] ?? '')) ?: $target,
+            'sources' => ['api_json'],
+        ];
+
+        $avatar = data_get($profile, 'artwork.fitInUrl');
+        if (!is_string($avatar) || trim($avatar) === '') {
+            $avatar = data_get($profile, 'artwork.url');
+        }
+        if (is_string($avatar) && trim($avatar) !== '') {
+            $metadata['avatar_url'] = trim($avatar);
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['username'] ?? null) && $metadata['username'] !== '') {
+            $summary['Username'] = $metadata['username'];
+        }
+        if (is_string($metadata['avatar_url'] ?? null) && $metadata['avatar_url'] !== '') {
+            $summary['Avatar'] = $metadata['avatar_url'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
 }

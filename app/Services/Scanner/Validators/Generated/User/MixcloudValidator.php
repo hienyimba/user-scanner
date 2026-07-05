@@ -7,7 +7,6 @@ namespace App\Services\Scanner\Validators\Generated\User;
 // parity-source: C:/Users/hieny/GitHub/user-scanner/user-scanner-py-june-release/user_scanner/user_scan/music/mixcloud.py
 // parity-class: manual-june
 
-use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 
@@ -54,18 +53,92 @@ final class MixcloudValidator extends BaseGeneratedValidator
     }
 
     protected function parseConnectorResponse(Response $response, string $target): array
-{
-    $status = $response->status();
-    $body = $response->body();
+    {
+        $status = $response->status();
 
-    if ($status === 404) {
-        return ['Available', ''];
+        if ($status === 404) {
+            return ['Available', ''];
+        }
+
+        if ($status === 200) {
+            $data = $response->json();
+            if (is_array($data) && array_key_exists('error', $data)) {
+                return ['Available', ''];
+            }
+
+            return ['Taken', ''];
+        }
+
+        return ['Error', 'Unexpected response body'];
     }
 
-    if ($status === 200) {
-        return ['Taken', ''];
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        $displayName = trim((string) ($data['name'] ?? ''));
+        if ($displayName !== '') {
+            $metadata['display_name'] = $displayName;
+        }
+
+        if (isset($data['follower_count']) && is_numeric($data['follower_count'])) {
+            $metadata['followers'] = (int) $data['follower_count'];
+        }
+        if (isset($data['following_count']) && is_numeric($data['following_count'])) {
+            $metadata['following'] = (int) $data['following_count'];
+        }
+
+        $pictures = $data['pictures'] ?? null;
+        if (is_array($pictures)) {
+            foreach (['large', 'thumbnail', 'small'] as $key) {
+                $avatarUrl = trim((string) ($pictures[$key] ?? ''));
+                if ($avatarUrl !== '') {
+                    $metadata['avatar_url'] = $avatarUrl;
+                    break;
+                }
+            }
+        }
+
+        return $metadata;
     }
 
-    return ['Error', 'Unexpected response body'];
-}
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_int($metadata['followers'] ?? null)) {
+            $summary['Followers'] = $metadata['followers'];
+        }
+        if (is_int($metadata['following'] ?? null)) {
+            $summary['Following'] = $metadata['following'];
+        }
+        if (is_string($metadata['avatar_url'] ?? null) && $metadata['avatar_url'] !== '') {
+            $summary['Avatar'] = $metadata['avatar_url'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
 }

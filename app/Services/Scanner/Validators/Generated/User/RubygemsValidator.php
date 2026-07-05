@@ -71,13 +71,37 @@ final class RubygemsValidator extends BaseGeneratedValidator
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
-        $body = $response->body();
-        $finalUrl = (string) ($response->effectiveUri() ?? '');
+        if ($status === 200) {
+            return ['Taken', ''];
+        }
 
         if ($status === 404) {
             return ['Available', ''];
         }
 
-        return ['Error', 'Unexpected response body'];
+        return ['Error', 'Unexpected status: ' . $status];
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if ($status !== 'Taken') {
+            return '';
+        }
+
+        $body = $response->body();
+        $metadata = [];
+
+        if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $body, $titleMatch) === 1) {
+            $name = trim(str_replace('Profile of', '', explode('|', $titleMatch[1])[0] ?? ''));
+            if ($name !== '') {
+                $metadata['Name'] = $name;
+            }
+        }
+
+        if (preg_match('/Gems\s*<span[^>]*>(\d+)<\/span>/i', $body, $gemsMatch) === 1) {
+            $metadata['Gems Count'] = $gemsMatch[1];
+        }
+
+        return $this->metadataSummary($metadata);
     }
 }

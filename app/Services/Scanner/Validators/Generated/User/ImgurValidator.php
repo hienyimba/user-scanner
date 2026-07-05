@@ -67,4 +67,107 @@ final class ImgurValidator extends BaseGeneratedValidator
 
         return ['Error', 'Unexpected response body, report it via GitHub issues.'];
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $username = trim((string) ($data['url'] ?? ($data['account_url'] ?? '')));
+        if ($username === '') {
+            $username = $target;
+        }
+
+        $metadata = [
+            'username' => $username,
+            'sources' => ['api_json'],
+        ];
+
+        $displayName = trim((string) ($data['display_name'] ?? ''));
+        if ($displayName !== '') {
+            $metadata['display_name'] = $displayName;
+        }
+
+        $avatarUrl = trim((string) ($data['avatar_url'] ?? data_get($data, 'avatar.url', '')));
+        if ($avatarUrl !== '') {
+            $metadata['avatar_url'] = $avatarUrl;
+        }
+
+        $bio = trim((string) ($data['bio'] ?? ''));
+        if ($bio !== '') {
+            $metadata['bio'] = $bio;
+        }
+
+        $websiteUrl = trim((string) ($data['website'] ?? ''));
+        if ($websiteUrl !== '') {
+            $metadata['website_url'] = $websiteUrl;
+            $metadata['external_links'] = [$websiteUrl];
+        }
+
+        foreach ([
+            'reputation' => 'reputation',
+            'reputation_name' => 'reputation_name',
+        ] as $sourceKey => $metadataKey) {
+            $value = $data[$sourceKey] ?? null;
+            if (is_numeric($value)) {
+                $metadata[$metadataKey] = (int) $value;
+                continue;
+            }
+            if (is_string($value) && trim($value) !== '') {
+                $metadata[$metadataKey] = trim($value);
+            }
+        }
+
+        foreach (['created_at', 'created'] as $sourceKey) {
+            if (isset($data[$sourceKey]) && is_numeric($data[$sourceKey])) {
+                try {
+                    $metadata['created_at'] = (new \DateTimeImmutable('@' . (string) $data[$sourceKey]))
+                        ->setTimezone(new \DateTimeZone('UTC'))
+                        ->format(DATE_ATOM);
+                } catch (\Throwable) {
+                    // Ignore invalid upstream timestamps.
+                }
+                break;
+            }
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['username'] ?? null) && $metadata['username'] !== '') {
+            $summary['Username'] = $metadata['username'];
+        }
+        if (isset($metadata['reputation'])) {
+            $summary['Reputation'] = (string) $metadata['reputation'];
+        }
+        if (is_string($metadata['reputation_name'] ?? null) && $metadata['reputation_name'] !== '') {
+            $summary['Reputation Label'] = $metadata['reputation_name'];
+        }
+        if (is_string($metadata['created_at'] ?? null) && $metadata['created_at'] !== '') {
+            $summary['Created'] = $metadata['created_at'];
+        }
+
+        return $this->metadataSummary($summary);
+    }
 }

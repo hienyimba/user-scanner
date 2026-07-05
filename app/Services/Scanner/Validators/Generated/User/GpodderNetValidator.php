@@ -71,9 +71,15 @@ final class GpodderNetValidator extends BaseGeneratedValidator
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
-        $body = $response->body();
-        $finalUrl = (string) ($response->effectiveUri() ?? '');
 
-        return ['Error', 'Unexpected response body'];
+        if ($status === 404) {
+            return ['Available', ''];
+        }
+
+        if ($status === 200) {
+            return ['Taken', ''];
+        }
+
+        return ['Error', 'Unexpected response status: ' . $status];
     }
 }

@@ -72,8 +72,15 @@ final class TelegramValidator extends BaseGeneratedValidator
     {
         $status = $response->status();
         $body = $response->body();
-        $finalUrl = (string) ($response->effectiveUri() ?? '');
 
-        return ['Error', 'Unexpected response body'];
+        if ($status === 200) {
+            if (preg_match('/<div[^>]*class="tgme_page_extra"[^>]*>/i', $body) === 1) {
+                return ['Taken', ''];
+            }
+
+            return ['Available', ''];
+        }
+
+        return ['Error', 'Unexpected response status: ' . $status];
     }
 }

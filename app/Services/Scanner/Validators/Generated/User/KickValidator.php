@@ -7,7 +7,6 @@ namespace App\Services\Scanner\Validators\Generated\User;
 // parity-source: C:/Users/hieny/GitHub/user-scanner/user-scanner-py-june-release/user_scanner/user_scan/gaming/kick.py
 // parity-class: manual-june
 
-use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 
@@ -79,5 +78,62 @@ final class KickValidator extends BaseGeneratedValidator
         }
 
         return ['Taken', ''];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $data = $response->json();
+        if (!is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        if (isset($data['id']) && is_numeric($data['id'])) {
+            $metadata['kick_id'] = (int) $data['id'];
+        }
+
+        $slug = trim((string) ($data['slug'] ?? ''));
+        if ($slug !== '') {
+            $metadata['slug'] = $slug;
+        }
+
+        if (array_key_exists('is_banned', $data)) {
+            $metadata['is_banned'] = (bool) $data['is_banned'];
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (is_int($metadata['kick_id'] ?? null)) {
+            $summary['ID'] = $metadata['kick_id'];
+        }
+        if (is_string($metadata['slug'] ?? null) && $metadata['slug'] !== '') {
+            $summary['Slug'] = $metadata['slug'];
+        }
+        if (array_key_exists('is_banned', $metadata)) {
+            $summary['Is Banned'] = $metadata['is_banned'] ? 'Yes' : 'No';
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

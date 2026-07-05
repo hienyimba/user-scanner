@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\User;
 
+// parity-source: C:/Users/hieny/GitHub/user-scanner/user-scanner-py-june-release/user_scanner/user_scan/email/protonmail.py
+// parity-class: manual-june
+
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 
@@ -41,7 +44,7 @@ final class ProtonmailValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://account.proton.me";
+        return 'https://account.proton.me/api/core/v4/users/available';
     }
 
     protected function followRedirects(): bool
@@ -57,7 +60,17 @@ final class ProtonmailValidator extends BaseGeneratedValidator
     protected function requestHeaders(): array
     {
         return [
-            // No connector-specific headers inferred.
+            'x-pm-appversion' => 'web-mail@6.0.1.3',
+            'Accept' => 'application/json',
+        ];
+    }
+
+    /** @return array<string,mixed> */
+    protected function requestQuery(string $target): array
+    {
+        return [
+            'Name' => $target . '@proton.me',
+            'ParseDomain' => '1',
         ];
     }
 
@@ -65,55 +78,29 @@ final class ProtonmailValidator extends BaseGeneratedValidator
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
-        $body = strtolower($response->body());
 
         if ($blocked = $this->detectBlockedOrChallenged($response)) {
             return $blocked;
         }
 
-        $availableStatuses = [];
-        $takenStatuses = [];
-        $availableIndicators = [];
-        $takenIndicators = [];
-
-        if ($this->mode() === 'username') {
-            if (in_array($status, $availableStatuses, true)) {
-                return ['Available', ''];
-            }
-            if (in_array($status, $takenStatuses, true)) {
-                return ['Taken', ''];
-            }
-            foreach ($takenIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Taken', ''];
-                }
-            }
-            foreach ($availableIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Available', ''];
-                }
-            }
-
-            return ['Error', $this->key() . ': indeterminate username response (HTTP ' . $status . ')'];
+        if (!in_array($status, [200, 409], true)) {
+            return ['Error', '[' . $status . '] Unexpected status code from Proton'];
         }
 
-        if (in_array($status, $takenStatuses, true)) {
-            return ['Registered', ''];
-        }
-        if (in_array($status, $availableStatuses, true)) {
-            return ['Not Registered', ''];
-        }
-        foreach ($takenIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Registered', ''];
-            }
-        }
-        foreach ($availableIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Not Registered', ''];
-            }
+        $data = $response->json();
+        if (!is_array($data)) {
+            return ['Error', 'Invalid JSON response from Proton'];
         }
 
-        return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+        $code = $data['Code'] ?? null;
+        if ($code === 12106) {
+            return ['Taken', ''];
+        }
+
+        if ($code === 1000) {
+            return ['Available', ''];
+        }
+
+        return ['Error', 'Unexpected Proton response code: ' . (is_scalar($code) ? (string) $code : gettype($code))];
     }
 }

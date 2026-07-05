@@ -69,10 +69,18 @@ final class VivinoValidator extends BaseGeneratedValidator
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
             }
             if ($error === '' || str_contains(strtolower($error), 'password')) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key(), metadata: [
+                    'public_email' => $target,
+                    'account_status' => 'active',
+                    'sources' => ['api_json'],
+                ]);
             }
             if (str_contains(strtolower($error), 'account has been locked')) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', 'Account is locked by Vivino', mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', 'Account is locked by Vivino', mode: $this->mode(), key: $this->key(), metadata: [
+                    'public_email' => $target,
+                    'account_status' => 'locked',
+                    'sources' => ['api_json'],
+                ]);
             }
 
             return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Vivino Error: ' . $error, mode: $this->mode(), key: $this->key());

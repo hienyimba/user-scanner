@@ -14,7 +14,7 @@ final class TwitchValidator extends BaseGeneratedValidator
     public function category(): string { return 'creator'; }
     public function mode(): string { return 'username'; }
     public function siteName(): string { return 'Twitch'; }
-    public function siteUrl(): string { return 'https://twitch.tv'; }
+    public function siteUrl(): string { return 'https://twitch.tv/{user}'; }
     protected function requestMethod(): string { return 'POST'; }
     protected function requestUrl(string $target): string { return 'https://gql.twitch.tv/gql'; }
     protected function followRedirects(): bool { return false; }
@@ -66,5 +66,94 @@ final class TwitchValidator extends BaseGeneratedValidator
             'UserDoesNotExist' => ['Available', ''],
             default => ['Error', 'Unexpected GraphQL response structure or type.'],
         };
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
+        }
+
+        $user = data_get($response->json(), '0.data.user');
+        if (!is_array($user) || ($user['__typename'] ?? null) !== 'User') {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+        ];
+
+        if (isset($user['id']) && is_numeric($user['id'])) {
+            $metadata['twitch_id'] = (int) $user['id'];
+        } elseif (isset($user['id'])) {
+            $metadata['twitch_id'] = (string) $user['id'];
+        }
+
+        $description = trim((string) ($user['description'] ?? ''));
+        if ($description !== '') {
+            $metadata['bio'] = $description;
+        }
+
+        $followers = data_get($user, 'followers.totalCount');
+        if (is_numeric($followers)) {
+            $metadata['followers'] = (int) $followers;
+        }
+
+        $externalLinks = [];
+        $socialMedias = data_get($user, 'channel.socialMedias', []);
+        if (is_array($socialMedias)) {
+            foreach ($socialMedias as $socialMedia) {
+                if (!is_array($socialMedia)) {
+                    continue;
+                }
+
+                $name = trim((string) ($socialMedia['name'] ?? ''));
+                $url = trim((string) ($socialMedia['url'] ?? ''));
+                if ($name === '' || $url === '') {
+                    continue;
+                }
+
+                $key = preg_replace('/[^a-z0-9]+/', '_', strtolower($name)) ?? '';
+                if ($key !== '') {
+                    $metadata[$key] = $url;
+                }
+                $externalLinks[] = $url;
+            }
+        }
+
+        if ($externalLinks !== []) {
+            $metadata['external_links'] = array_values(array_unique($externalLinks));
+        }
+
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['twitch_id'])) {
+            $summary['ID'] = (string) $metadata['twitch_id'];
+        }
+        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
+            $summary['Description'] = $metadata['bio'];
+        }
+        if (isset($metadata['followers'])) {
+            $summary['Followers'] = (string) $metadata['followers'];
+        }
+        if (($metadata['external_links'] ?? []) !== []) {
+            $summary['Links'] = implode(', ', $metadata['external_links']);
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

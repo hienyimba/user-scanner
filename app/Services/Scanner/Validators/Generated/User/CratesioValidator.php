@@ -31,7 +31,7 @@ final class CratesioValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://crates.io/users';
+        return 'https://crates.io/users/{user}';
     }
 
     protected function requestMethod(): string

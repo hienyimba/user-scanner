@@ -31,7 +31,7 @@ final class GitlabValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://gitlab.com';
+        return 'https://gitlab.com/{user}';
     }
 
     protected function requestMethod(): string
@@ -41,7 +41,7 @@ final class GitlabValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://gitlab.com/users/{$target}/exists";
+        return 'https://gitlab.com/api/v4/users';
     }
 
     protected function followRedirects(): bool
@@ -57,63 +57,102 @@ final class GitlabValidator extends BaseGeneratedValidator
     protected function requestHeaders(): array
     {
         return [
-            // No connector-specific headers inferred.
+            'Accept' => 'application/json, text/plain, */*',
+        ];
+    }
+
+    protected function requestQuery(string $target): array
+    {
+        return [
+            'username' => $target,
         ];
     }
 
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        $status = $response->status();
-        $body = strtolower($response->body());
-
-        if ($blocked = $this->detectBlockedOrChallenged($response)) {
-            return $blocked;
+        if ($response->status() !== 200) {
+            return ['Error', 'Unexpected status or response: ' . $response->status()];
         }
 
-        $availableStatuses = [];
-        $takenStatuses = [];
-        $availableIndicators = [];
-        $takenIndicators = [];
-
-        if ($this->mode() === 'username') {
-            if (in_array($status, $availableStatuses, true)) {
-                return ['Available', ''];
-            }
-            if (in_array($status, $takenStatuses, true)) {
-                return ['Taken', ''];
-            }
-            foreach ($takenIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Taken', ''];
-                }
-            }
-            foreach ($availableIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Available', ''];
-                }
-            }
-
-            return ['Error', $this->key() . ': indeterminate username response (HTTP ' . $status . ')'];
+        $data = $response->json();
+        if (!is_array($data)) {
+            return ['Error', 'Unexpected status or response: ' . $response->status()];
         }
 
-        if (in_array($status, $takenStatuses, true)) {
-            return ['Registered', ''];
+        return $data === [] ? ['Available', ''] : ['Taken', ''];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return [];
         }
-        if (in_array($status, $availableStatuses, true)) {
-            return ['Not Registered', ''];
+
+        $data = $response->json();
+        if (!is_array($data) || !isset($data[0]) || !is_array($data[0])) {
+            return [];
         }
-        foreach ($takenIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Registered', ''];
-            }
+
+        $user = $data[0];
+        $metadata = [
+            'username' => trim((string) ($user['username'] ?? $target)),
+            'sources' => ['api_json'],
+        ];
+
+        $id = $user['id'] ?? null;
+        if (is_numeric($id)) {
+            $metadata['gitlab_id'] = (int) $id;
+        } elseif (is_scalar($id)) {
+            $metadata['gitlab_id'] = trim((string) $id);
         }
-        foreach ($availableIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Not Registered', ''];
+
+        $displayName = trim((string) ($user['name'] ?? ''));
+        if ($displayName !== '') {
+            $metadata['display_name'] = $displayName;
+        }
+
+        $state = trim((string) ($user['state'] ?? ''));
+        if ($state !== '') {
+            $metadata['account_state'] = $state;
+        }
+
+        $avatarUrl = trim((string) ($user['avatar_url'] ?? ''));
+        if ($avatarUrl !== '') {
+            $metadata['avatar_url'] = $avatarUrl;
+            if (preg_match('#gravatar\.com/avatar/([a-f0-9]{32})#i', $avatarUrl, $matches) === 1) {
+                $hash = strtolower($matches[1]);
+                $metadata['gravatar_url'] = 'https://gravatar.com/' . $hash;
+                $metadata['gravatar_username'] = $metadata['username'];
+                $metadata['gravatar_email_md5_hash'] = $hash;
             }
         }
 
-        return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+        return $metadata;
+    }
+
+    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    {
+        if (!in_array($status, ['Taken', 'Found'], true)) {
+            return '';
+        }
+
+        $metadata = $this->buildStructuredMetadata($response, $target, $status);
+        $summary = [];
+
+        if (isset($metadata['gitlab_id'])) {
+            $summary['UID'] = (string) $metadata['gitlab_id'];
+        }
+        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
+            $summary['Full Name'] = $metadata['display_name'];
+        }
+        if (is_string($metadata['account_state'] ?? null) && $metadata['account_state'] !== '') {
+            $summary['State'] = $metadata['account_state'];
+        }
+
+        return $this->metadataSummary($summary);
     }
 }

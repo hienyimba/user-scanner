@@ -27,8 +27,11 @@ This Laravel scanner MVP now supports:
 - Generated validators provide broad connector coverage, with best-effort parity for complex providers.
 - Queue progress is visible in the UI through polling the run-status API.
 - Run data is persisted at `laravel_app/storage/scan_runs.json`.
+- Metadata enrichment and readiness workflow are documented in `docs/metadata_enrichment.md`.
 
-## Connector smoke matrix
-- Generated connector strategy + smoke readiness matrix:
-  - `laravel_app/docs/connector_validation_matrix.md`
-- Matrix entries now include transport-level smoke outcomes (`reachable` / `network_error`) and per-connector HTTP notes from automated probes; semantic parity still depends on provider-specific response parsing logic.
+## Metadata readiness
+- Normalized scanner results are exported with stable `status`, `profile_url`, `metadata`, `evidence`, and `confidence` fields.
+- `php artisan scanner:metadata-readiness --json` reports documented June-inventory capability separately from live-validated capability counts.
+- `php artisan scanner:metadata-audit ...` verifies observed module output against the documented capability level.
+- `php artisan scanner:metadata-validate-baselines ...` converts successful live audits into the validation overlay used by the readiness report.
+- `docs/metadata_acceptance_audit.md` maps the WebVetted requirements to current evidence and calls out any remaining ambiguity.
