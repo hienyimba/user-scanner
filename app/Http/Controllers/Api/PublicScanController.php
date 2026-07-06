@@ -17,7 +17,9 @@ use RuntimeException;
 
 final class PublicScanController extends Controller
 {
-    public function create(PublicScanRequest $request, QueuedScanService $queuedRuns): JsonResponse
+    private const DEFAULT_REUSE_WINDOW_HOURS = 48;
+
+    public function create(PublicScanRequest $request, QueuedScanService $queuedRuns, ScanRunStore $store): JsonResponse
     {
         $data = $request->validated();
         $options = [
@@ -27,6 +29,28 @@ final class PublicScanController extends Controller
             'store' => (bool) ($data['store'] ?? false),
             'category' => $data['category'] ?? null,
         ];
+
+        if ($options['store'] === true) {
+            $reusedRun = $store->findReusablePublicRun(
+                mode: $data['mode'],
+                target: $data['target'],
+                category: $data['category'] ?? null,
+                windowHours: self::DEFAULT_REUSE_WINDOW_HOURS,
+            );
+
+            if ($reusedRun !== null) {
+                return response()->json([
+                    'ok' => true,
+                    'run_id' => $reusedRun['id'],
+                    'status' => $reusedRun['status'],
+                    'mode' => $data['mode'],
+                    'category' => $data['category'] ?? null,
+                    'target' => $data['target'],
+                    'reused' => true,
+                    'cached' => $reusedRun['status'] === 'completed',
+                ], $reusedRun['status'] === 'completed' ? 200 : 202);
+            }
+        }
 
         try {
             $run = $queuedRuns->startRun(
@@ -50,6 +74,8 @@ final class PublicScanController extends Controller
             'mode' => $data['mode'],
             'category' => $data['category'] ?? null,
             'target' => $data['target'],
+            'reused' => false,
+            'cached' => false,
         ], 202);
     }
 

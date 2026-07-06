@@ -44,6 +44,8 @@ final class PublicScanApiTest extends TestCase
                 'status' => 'queued',
                 'mode' => 'username',
                 'target' => 'alice',
+                'reused' => false,
+                'cached' => false,
             ]);
 
         Queue::assertPushed(RunValidatorJob::class, 2);
@@ -72,6 +74,134 @@ final class PublicScanApiTest extends TestCase
         $this->assertTrue((bool) ($run['options']['only_found'] ?? false));
         $this->assertTrue((bool) ($run['options']['use_proxy'] ?? false));
         $this->assertTrue((bool) ($run['options']['store'] ?? false));
+    }
+
+    public function test_public_scan_create_reuses_running_matching_run_when_store_is_true(): void
+    {
+        Queue::fake();
+
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: ['category' => 'social', 'store' => true],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+        $store->markJobStarted($runId);
+
+        $response = $this->postJson('/api/v1/scan', [
+            'mode' => 'username',
+            'target' => 'alice',
+            'category' => 'social',
+            'store' => true,
+        ]);
+
+        $response->assertAccepted()->assertJson([
+            'ok' => true,
+            'run_id' => $runId,
+            'status' => 'running',
+            'reused' => true,
+            'cached' => false,
+        ]);
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_public_scan_create_reuses_recent_completed_matching_run_within_48_hours(): void
+    {
+        Queue::fake();
+
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: ['category' => 'social', 'store' => true],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Alpha',
+            'url' => 'https://alpha.test',
+            'status' => 'Found',
+            'reason' => '',
+            'mode' => 'username',
+            'key' => 'alpha',
+        ], 0, 0);
+
+        $response = $this->postJson('/api/v1/scan', [
+            'mode' => 'username',
+            'target' => 'alice',
+            'category' => 'social',
+            'store' => true,
+        ]);
+
+        $response->assertOk()->assertJson([
+            'ok' => true,
+            'run_id' => $runId,
+            'status' => 'completed',
+            'reused' => true,
+            'cached' => true,
+        ]);
+
+        Queue::assertNothingPushed();
+    }
+
+    public function test_public_scan_create_does_not_reuse_completed_run_older_than_48_hours(): void
+    {
+        Queue::fake();
+
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: ['category' => 'social', 'store' => true],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Alpha',
+            'url' => 'https://alpha.test',
+            'status' => 'Found',
+            'reason' => '',
+            'mode' => 'username',
+            'key' => 'alpha',
+        ], 0, 0);
+
+        \Illuminate\Support\Facades\DB::table('scan_runs')->where('id', $runId)->update([
+            'created_at' => now()->subHours(49),
+            'updated_at' => now()->subHours(49),
+            'completed_at' => now()->subHours(49),
+        ]);
+
+        $response = $this->postJson('/api/v1/scan', [
+            'mode' => 'username',
+            'target' => 'alice',
+            'category' => 'social',
+            'store' => true,
+        ]);
+
+        $response->assertAccepted()->assertJson([
+            'ok' => true,
+            'status' => 'queued',
+            'reused' => false,
+            'cached' => false,
+        ]);
+
+        $this->assertNotSame($runId, $response->json('run_id'));
+        Queue::assertPushed(RunValidatorJob::class);
     }
 
     public function test_public_scan_rejects_invalid_payload(): void

@@ -184,6 +184,23 @@ final class ScanRunStore
         return array_map(fn ($run): array => $this->hydrateRun($run), $query->get()->all());
     }
 
+    /** @return array<string,mixed>|null */
+    public function findReusablePublicRun(string $mode, string $target, ?string $category = null, int $windowHours = 48): ?array
+    {
+        $activeRun = $this->findLatestMatchingRun($mode, $target, $category, ['queued', 'running']);
+        if ($activeRun !== null) {
+            return $activeRun;
+        }
+
+        return $this->findLatestMatchingRun(
+            $mode,
+            $target,
+            $category,
+            ['completed'],
+            now()->subHours($windowHours),
+        );
+    }
+
     /** @return array<int,array<string,mixed>> */
     public function filteredResults(string $runId, ?string $status = null, ?string $category = null, ?bool $onlyHits = null): array
     {
@@ -405,5 +422,54 @@ final class ScanRunStore
         return $this->metadataEnrichment
             ->enrich(ScanResult::fromArray($raw), $validator, ['enrich_metadata' => false])
             ->toArray();
+    }
+
+    /** @param array<int, string> $statuses */
+    private function findLatestMatchingRun(
+        string $mode,
+        string $target,
+        ?string $category,
+        array $statuses,
+        mixed $completedAfter = null,
+    ): ?array {
+        $query = DB::table('scan_runs')
+            ->where('mode', $mode)
+            ->whereIn('status', $statuses)
+            ->orderByDesc('created_at');
+
+        if ($completedAfter !== null) {
+            $query->whereNotNull('completed_at')
+                ->where('completed_at', '>=', $completedAfter);
+        }
+
+        foreach ($query->get()->all() as $run) {
+            $hydrated = $this->hydrateRun($run);
+            if ($this->matchesPublicRun($hydrated, $target, $category)) {
+                return $hydrated;
+            }
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $run */
+    private function matchesPublicRun(array $run, string $target, ?string $category): bool
+    {
+        if (($run['target_count'] ?? 0) !== 1) {
+            return false;
+        }
+
+        if (($run['targets'][0] ?? null) !== $target) {
+            return false;
+        }
+
+        $runCategory = $run['options']['category'] ?? null;
+        if ($runCategory !== $category) {
+            return false;
+        }
+
+        $moduleKeys = $run['options']['module_keys'] ?? [];
+
+        return is_array($moduleKeys) && $moduleKeys === [];
     }
 }
