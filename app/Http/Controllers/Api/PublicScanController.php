@@ -24,6 +24,7 @@ final class PublicScanController extends Controller
             'use_proxy' => (bool) ($data['use_proxy'] ?? false),
             'show_hits' => (bool) ($data['show_hits'] ?? false),
             'only_found' => (bool) ($data['show_hits'] ?? false),
+            'store' => (bool) ($data['store'] ?? false),
             'category' => $data['category'] ?? null,
         ];
 

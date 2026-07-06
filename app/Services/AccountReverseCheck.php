@@ -19,6 +19,7 @@ class AccountReverseCheck
     protected array $defaultHeaders = [];
     protected array $defaultCreatePayload = [
         'show_hits' => true,
+        'store'     => true,
         'use_proxy' => true,
     ];
     protected int $timeoutSeconds = 15;

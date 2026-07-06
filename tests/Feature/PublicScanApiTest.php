@@ -49,7 +49,7 @@ final class PublicScanApiTest extends TestCase
         Queue::assertPushed(RunValidatorJob::class, 2);
     }
 
-    public function test_public_scan_create_maps_show_hits_and_use_proxy(): void
+    public function test_public_scan_create_maps_show_hits_use_proxy_and_store(): void
     {
         Queue::fake();
 
@@ -59,6 +59,7 @@ final class PublicScanApiTest extends TestCase
             'category' => 'social',
             'use_proxy' => true,
             'show_hits' => true,
+            'store' => true,
         ]);
 
         $response->assertAccepted()->assertJson([
@@ -70,6 +71,7 @@ final class PublicScanApiTest extends TestCase
         $this->assertTrue((bool) ($run['options']['show_hits'] ?? false));
         $this->assertTrue((bool) ($run['options']['only_found'] ?? false));
         $this->assertTrue((bool) ($run['options']['use_proxy'] ?? false));
+        $this->assertTrue((bool) ($run['options']['store'] ?? false));
     }
 
     public function test_public_scan_rejects_invalid_payload(): void

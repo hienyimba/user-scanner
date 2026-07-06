@@ -13,6 +13,7 @@ final class PublicScanRequest extends AbstractScanRequest
             'category' => $this->normalizeCategory(),
             'use_proxy' => $this->normalizeBoolean('use_proxy'),
             'show_hits' => $this->normalizeBoolean('show_hits'),
+            'store' => $this->normalizeBoolean('store'),
         ]);
     }
 
@@ -25,6 +26,7 @@ final class PublicScanRequest extends AbstractScanRequest
             'target' => ['required', 'string', 'max:255'],
             'use_proxy' => ['nullable', 'boolean'],
             'show_hits' => ['nullable', 'boolean'],
+            'store' => ['nullable', 'boolean'],
         ];
     }
 }

@@ -91,7 +91,8 @@ final class AccountReverseCheckTest extends TestCase
             return $request['mode'] === 'username'
                 && $request['target'] === 'alice'
                 && $request['show_hits'] === true
-                && $request['use_proxy'] === false;
+                && $request['store'] === true
+                && $request['use_proxy'] === true;
         });
     }
 
