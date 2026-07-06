@@ -146,6 +146,47 @@ final class AccountReverseCheckTest extends TestCase
         $this->assertSame('email', $result['raw']['results'][0]['metadata'][0]['kind']);
     }
 
+    public function test_it_removes_transport_debug_fields_before_metadata_normalization(): void
+    {
+        Http::fake([
+            'https://scanner.test/api/v1/scan' => Http::response([
+                'ok' => true,
+                'run_id' => 'run-789',
+            ], 202),
+            'https://scanner.test/api/v1/scan/run-789/final' => Http::response([
+                'ok' => true,
+                'ready' => true,
+                'run' => [
+                    'id' => 'run-789',
+                    'status' => 'completed',
+                ],
+                'results' => [[
+                    'site_name' => 'Alpha',
+                    'category' => 'social',
+                    'url' => 'https://alpha.test/users/alice',
+                    'status' => 'Found',
+                    'normalized_status' => 'found',
+                    'metadata' => [
+                        'display_name' => 'Alice Example',
+                        'http_status' => 200,
+                        'latency_ms' => 290,
+                        'proxy_used' => 'disp.oxylabs.io:8013',
+                    ],
+                ]],
+            ], 200),
+        ]);
+
+        $service = $this->makeService(scannerApiBaseUrl: 'https://scanner.test/api');
+        $result = $service->fetch('alice', 'reverse_username');
+
+        $labels = array_column($result['raw']['results'][0]['metadata'], 'label');
+
+        $this->assertContains('Display Name', $labels);
+        $this->assertNotContains('Http Status', $labels);
+        $this->assertNotContains('Latency Ms', $labels);
+        $this->assertNotContains('Proxy Used', $labels);
+    }
+
     private function makeService(
         string $scannerApiBaseUrl,
         int $pollIntervalMs = 1500,

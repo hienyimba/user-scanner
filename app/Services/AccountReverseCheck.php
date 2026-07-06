@@ -179,8 +179,16 @@ class AccountReverseCheck
 
     protected function cleanMetadata(array $row): array
     {
+        //exclude these data rows
         $metadata = Arr::except((array) ($row['metadata'] ?? []), [
-            'platform', 'status_detail', 'observed_metadata_level', 'evidence', 'sources'
+            'platform',
+            'status_detail',
+            'observed_metadata_level',
+            'evidence',
+            'sources',
+            'http_status',
+            'latency_ms',
+            'proxy_used',
         ]);
 
         if (!empty($row['extra'])) {
