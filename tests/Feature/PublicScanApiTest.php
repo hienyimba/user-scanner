@@ -137,6 +137,103 @@ final class PublicScanApiTest extends TestCase
         $this->assertSame("Masked phone: ***1234\nLogin methods: password", $results[0]['extra']);
     }
 
+    public function test_public_final_endpoint_returns_accepted_until_run_is_complete(): void
+    {
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: [],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+
+        $response = $this->getJson("/api/v1/scan/{$runId}/final");
+
+        $response->assertAccepted()
+            ->assertJson([
+                'ok' => true,
+                'ready' => false,
+                'run' => [
+                    'id' => $runId,
+                    'status' => 'queued',
+                ],
+            ]);
+        $response->assertJsonMissingPath('results');
+    }
+
+    public function test_public_final_endpoint_returns_results_only_after_completion(): void
+    {
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: [],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Alpha',
+            'url' => 'https://alpha.test',
+            'status' => 'Found',
+            'reason' => '',
+            'extra' => 'Name: Alice Example',
+            'mode' => 'username',
+            'key' => 'alpha',
+        ], 0, 0);
+
+        $response = $this->getJson("/api/v1/scan/{$runId}/final");
+
+        $response->assertOk()
+            ->assertJson([
+                'ok' => true,
+                'ready' => true,
+                'run' => [
+                    'id' => $runId,
+                    'status' => 'completed',
+                ],
+            ]);
+        $response->assertJsonCount(1, 'results');
+        $this->assertSame('alpha', $response->json('results.0.key'));
+    }
+
+    public function test_public_final_endpoint_returns_conflict_for_failed_runs(): void
+    {
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: [],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+
+        $store->failRun($runId, 'Queue dispatch failed');
+
+        $response = $this->getJson("/api/v1/scan/{$runId}/final");
+
+        $response->assertStatus(409)
+            ->assertJson([
+                'ok' => false,
+                'ready' => false,
+                'error' => 'Queue dispatch failed',
+                'run' => [
+                    'id' => $runId,
+                    'status' => 'failed',
+                ],
+            ]);
+    }
+
     public function test_public_scan_status_returns_structured_metadata_fields(): void
     {
         $store = app(ScanRunStore::class);

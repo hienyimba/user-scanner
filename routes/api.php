@@ -7,9 +7,11 @@ use Illuminate\Support\Facades\Route;
 
 Route::prefix('/v1/scan')->group(function (): void {
     Route::post('/', [PublicScanController::class, 'create']);
+    Route::get('/{runId}/final', [PublicScanController::class, 'final']);
     Route::get('/{runId}', [PublicScanController::class, 'show']);
     Route::get('/modules/{mode}', [PublicScanController::class, 'modules']);
     Route::options('/', fn () => response('', 204));
+    Route::options('/{runId}/final', fn () => response('', 204));
     Route::options('/{runId}', fn () => response('', 204));
     Route::options('/modules/{mode}', fn () => response('', 204));
 })->middleware('public.api.cors');

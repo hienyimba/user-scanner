@@ -69,6 +69,40 @@ final class PublicScanController extends Controller
         ]);
     }
 
+    public function final(string $runId, ScanRunStore $store, ScanRunPresenter $presenter): JsonResponse
+    {
+        $run = $store->getRun($runId);
+        if (!$run) {
+            return response()->json(['ok' => false, 'error' => 'Run not found'], 404);
+        }
+
+        $showHits = (bool) ($run['options']['show_hits'] ?? $run['options']['only_found'] ?? false);
+        $payload = [
+            'ok' => true,
+            'ready' => false,
+            'run' => $presenter->publicApiRun($run, $showHits),
+        ];
+
+        if (($run['status'] ?? null) === 'completed') {
+            return response()->json([
+                ...$payload,
+                'ready' => true,
+                'results' => $store->filteredResults($runId, null, null, $showHits),
+            ]);
+        }
+
+        if (($run['status'] ?? null) === 'failed') {
+            return response()->json([
+                'ok' => false,
+                'ready' => false,
+                'error' => $run['error'] ?? 'Run failed',
+                'run' => $presenter->publicApiRun($run, $showHits),
+            ], 409);
+        }
+
+        return response()->json($payload, 202);
+    }
+
     public function modules(
         string $mode,
         ScannerEngineService $engine,
