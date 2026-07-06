@@ -30,7 +30,9 @@ final class MetadataCapabilityService
      */
     public function summary(): array
     {
+        $modeSummary = $this->modeSummary();
         $levels = [
+            'level_0' => 0,
             'level_1' => 0,
             'level_2' => 0,
             'level_3' => 0,
@@ -51,23 +53,18 @@ final class MetadataCapabilityService
         $validatedLevel4 = 0;
         foreach ($this->loadInventory() as $record) {
             $levels['level_' . $record['level']]++;
-            if ($record['level'] >= 3) {
-                $level3Plus++;
-            }
-            if ($record['level'] >= 4) {
-                $level4++;
-            }
             if ($record['validated_level'] !== null) {
-                $validatedModules++;
                 $validatedLevel = (int) $record['validated_level'];
                 $validatedLevels['level_' . $validatedLevel]++;
-                if ($validatedLevel >= 3) {
-                    $validatedLevel3Plus++;
-                }
-                if ($validatedLevel >= 4) {
-                    $validatedLevel4++;
-                }
             }
+        }
+
+        foreach ($modeSummary as $summary) {
+            $level3Plus += $summary['level_3_plus'];
+            $level4 += $summary['level_4'];
+            $validatedModules += $summary['validated_modules'];
+            $validatedLevel3Plus += $summary['validated_level_3_plus'];
+            $validatedLevel4 += $summary['validated_level_4'];
         }
 
         return [
@@ -79,6 +76,134 @@ final class MetadataCapabilityService
             'validated_level_3_plus' => $validatedLevel3Plus,
             'validated_level_4' => $validatedLevel4,
             'validated_levels' => $validatedLevels,
+        ];
+    }
+
+    /**
+     * @return array<string, array{documented_modules:int,level_3_plus:int,level_4:int,validated_modules:int,validated_level_3_plus:int,validated_level_4:int}>
+     */
+    public function modeSummary(): array
+    {
+        $summary = [
+            'username' => [
+                'documented_modules' => 0,
+                'level_3_plus' => 0,
+                'level_4' => 0,
+                'validated_modules' => 0,
+                'validated_level_3_plus' => 0,
+                'validated_level_4' => 0,
+            ],
+            'email' => [
+                'documented_modules' => 0,
+                'level_3_plus' => 0,
+                'level_4' => 0,
+                'validated_modules' => 0,
+                'validated_level_3_plus' => 0,
+                'validated_level_4' => 0,
+            ],
+        ];
+
+        foreach ($this->loadInventory() as $record) {
+            $mode = (string) ($record['mode'] ?? '');
+            if (!isset($summary[$mode])) {
+                continue;
+            }
+
+            $summary[$mode]['documented_modules']++;
+            if ((int) ($record['level'] ?? 0) >= 3) {
+                $summary[$mode]['level_3_plus']++;
+            }
+            if ((int) ($record['level'] ?? 0) >= 4) {
+                $summary[$mode]['level_4']++;
+            }
+            if (($record['validated_level'] ?? null) !== null) {
+                $summary[$mode]['validated_modules']++;
+                $validatedLevel = (int) $record['validated_level'];
+                if ($validatedLevel >= 3) {
+                    $summary[$mode]['validated_level_3_plus']++;
+                }
+                if ($validatedLevel >= 4) {
+                    $summary[$mode]['validated_level_4']++;
+                }
+            }
+        }
+
+        return $summary;
+    }
+
+    /**
+     * @return array{
+     *   mode:string,
+     *   promotion_candidates:int,
+     *   promotion_candidate_platforms:array<int, string>,
+     *   promotion_candidates_with_baseline_targets:int,
+     *   promotion_candidate_platforms_with_baseline_targets:array<int, string>,
+     *   promotion_candidates_without_baseline_targets:int,
+     *   promotion_candidate_platforms_without_baseline_targets:array<int, string>,
+     *   safety_blocked_modules:int,
+     *   safety_blocked_platforms:array<int, string>,
+     *   validated_below_documented_modules:int,
+     *   validated_below_documented_platforms:array<int, string>
+     * }
+     */
+    public function validationGapSummary(string $mode): array
+    {
+        $baselineRegistry = $this->baselineRegistry()[$mode] ?? [];
+        $promotionCandidatePlatforms = [];
+        $promotionCandidatePlatformsWithBaselines = [];
+        $promotionCandidatePlatformsWithoutBaselines = [];
+        $safetyBlockedPlatforms = [];
+        $validatedBelowDocumentedPlatforms = [];
+
+        foreach ($this->loadInventory() as $record) {
+            if (($record['mode'] ?? null) !== $mode) {
+                continue;
+            }
+
+            $platform = (string) $record['platform'];
+            $level = (int) $record['level'];
+            $validatedLevel = is_numeric($record['validated_level'] ?? null) ? (int) $record['validated_level'] : null;
+            $strategy = (string) ($record['strategy'] ?? '');
+            $hasBaselineTargets = is_array($baselineRegistry[$platform] ?? null) && ($baselineRegistry[$platform] ?? []) !== [];
+
+            if ($strategy === 'safety-blocked-placeholder') {
+                $safetyBlockedPlatforms[] = $platform;
+            }
+
+            if ($validatedLevel !== null && $validatedLevel < $level) {
+                $validatedBelowDocumentedPlatforms[] = $platform;
+            }
+
+            if ($level < 3 || $validatedLevel !== null || $strategy === 'safety-blocked-placeholder') {
+                continue;
+            }
+
+            $promotionCandidatePlatforms[] = $platform;
+            if ($hasBaselineTargets) {
+                $promotionCandidatePlatformsWithBaselines[] = $platform;
+            } else {
+                $promotionCandidatePlatformsWithoutBaselines[] = $platform;
+            }
+        }
+
+        sort($promotionCandidatePlatforms);
+        sort($promotionCandidatePlatformsWithBaselines);
+        sort($promotionCandidatePlatformsWithoutBaselines);
+        sort($safetyBlockedPlatforms);
+        sort($validatedBelowDocumentedPlatforms);
+
+        return [
+            'mode' => $mode,
+            'promotion_candidates' => count($promotionCandidatePlatforms),
+            'promotion_candidate_platforms' => $promotionCandidatePlatforms,
+            'promotion_candidates_with_baseline_targets' => count($promotionCandidatePlatformsWithBaselines),
+            'promotion_candidate_platforms_with_baseline_targets' => $promotionCandidatePlatformsWithBaselines,
+            'promotion_candidates_without_baseline_targets' => count($promotionCandidatePlatformsWithoutBaselines),
+            'promotion_candidate_platforms_without_baseline_targets' => $promotionCandidatePlatformsWithoutBaselines,
+            'safety_blocked_modules' => count($safetyBlockedPlatforms),
+            'safety_blocked_platforms' => $safetyBlockedPlatforms,
+            'validated_below_documented_modules' => count($validatedBelowDocumentedPlatforms),
+            'validated_below_documented_platforms' => $validatedBelowDocumentedPlatforms,
         ];
     }
 
@@ -140,6 +265,44 @@ final class MetadataCapabilityService
             }
         }
 
+        foreach ($this->capabilityOverrides() as $mode => $records) {
+            if (!is_array($records)) {
+                continue;
+            }
+
+            foreach ($records as $platform => $override) {
+                if (!is_array($override)) {
+                    continue;
+                }
+
+                $key = $mode . ':' . $platform;
+                $existing = $inventory[$key] ?? null;
+                $validation = $validationBaselines[$mode][$platform] ?? null;
+
+                $inventory[$key] = [
+                    'mode' => (string) ($override['mode'] ?? $mode),
+                    'platform' => (string) ($override['platform'] ?? $platform),
+                    'category' => (string) ($override['category'] ?? ($existing['category'] ?? 'other')),
+                    'path' => (string) ($override['path'] ?? ($existing['path'] ?? 'private-laravel')),
+                    'level' => is_numeric($override['level'] ?? null) ? (int) $override['level'] : (int) ($existing['level'] ?? 1),
+                    'strategy' => (string) ($override['strategy'] ?? ($existing['strategy'] ?? 'unknown')),
+                    'notes' => (string) ($override['notes'] ?? ($existing['notes'] ?? 'No capability audit entry found')),
+                    'validated_level' => is_array($validation) && is_numeric($validation['validated_level'] ?? null)
+                        ? (int) $validation['validated_level']
+                        : ($existing['validated_level'] ?? null),
+                    'validated_at' => is_array($validation) && is_string($validation['validated_at'] ?? null)
+                        ? $validation['validated_at']
+                        : ($existing['validated_at'] ?? null),
+                    'validated_targets' => is_array($validation['targets'] ?? null)
+                        ? array_values(array_map('strval', $validation['targets']))
+                        : ($existing['validated_targets'] ?? []),
+                    'validated_notes' => is_array($validation) && is_string($validation['notes'] ?? null)
+                        ? $validation['notes']
+                        : ($existing['validated_notes'] ?? null),
+                ];
+            }
+        }
+
         ksort($inventory);
         $this->inventory = $inventory;
 
@@ -152,6 +315,36 @@ final class MetadataCapabilityService
     private function validationBaselines(): array
     {
         $path = base_path('config/scanner_metadata_validations.php');
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $loaded = require $path;
+
+        return is_array($loaded) ? $loaded : [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function capabilityOverrides(): array
+    {
+        $path = base_path('config/scanner_metadata_capability_overrides.php');
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $loaded = require $path;
+
+        return is_array($loaded) ? $loaded : [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function baselineRegistry(): array
+    {
+        $path = base_path('config/scanner_metadata_targets.php');
         if (!is_file($path)) {
             return [];
         }

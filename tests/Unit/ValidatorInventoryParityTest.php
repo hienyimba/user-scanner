@@ -15,6 +15,10 @@ final class ValidatorInventoryParityTest extends TestCase
         $pythonUser = glob($root . '/user-scanner-py-june-release/user_scanner/user_scan/*/*.py') ?: [];
         $pythonEmail = glob($root . '/user-scanner-py-june-release/user_scanner/email_scan/*/*.py') ?: [];
         $phpUser = glob($root . '/app/Services/Scanner/Validators/Generated/User/*Validator.php') ?: [];
+        $manualUserOverrides = array_values(array_filter(
+            glob($root . '/app/Services/Scanner/Validators/Generated/Manual/User/*Validator.php') ?: [],
+            static fn (string $path): bool => in_array(pathinfo($path, PATHINFO_FILENAME), ['GithubValidator', 'XValidator'], true)
+        ));
         $phpEmail = glob($root . '/app/Services/Scanner/Validators/Generated/Email/*Validator.php') ?: [];
 
         $pythonUser = array_values(array_filter(
@@ -28,7 +32,7 @@ final class ValidatorInventoryParityTest extends TestCase
 
         self::assertCount(188, $pythonUser, 'June source username inventory drifted.');
         self::assertCount(105, $pythonEmail, 'June source email inventory drifted.');
-        self::assertCount(count($pythonUser), $phpUser, 'Generated user validator count drifted from Python inventory.');
+        self::assertCount(count($pythonUser), array_merge($phpUser, $manualUserOverrides), 'Generated user validator count drifted from Python inventory.');
         self::assertCount(count($pythonEmail), $phpEmail, 'Generated email validator count drifted from Python inventory.');
     }
 

@@ -638,13 +638,17 @@ final class ProfileMetadataExtractor
 
         foreach ([
             'displayName', 'display_username', 'full_name', 'fullName', 'name', 'title', 'username',
+            'user_id', 'userId', 'uid', 'id', 'externalId',
             'description', 'about', 'bio', 'summary',
             'avatar_url', 'avatarUrl', 'image', 'image_url', 'imageUrl', 'photo', 'picture',
             'location', 'city', 'website', 'website_url', 'websiteUrl', 'vanityChannelUrl', 'channel_url', 'url', 'portfolio',
             'followers', 'follower_count', 'followers_count', 'followersCount',
             'following', 'following_count', 'followings_count', 'followingCount',
             'post_count', 'posts_count', 'pin_count', 'board_count', 'track_count', 'repo_count',
-            'verified', 'isVerified', 'is_paid', 'is_community', 'email',
+            'playlist_count', 'playlistCount', 'friends_count', 'friend_count', 'tips_count', 'tip_count',
+            'stations_count', 'station_count', 'countries_count', 'country_count',
+            'verified', 'isVerified', 'is_paid', 'is_premium', 'isPremium', 'is_private', 'isPrivate',
+            'private', 'protected', 'locked', 'show_pro_badge', 'verified_type', 'jid', 'is_community', 'email', 'gender',
         ] as $key) {
             if (!array_key_exists($key, $node) || $node[$key] === null || $node[$key] === '' || $node[$key] === []) {
                 continue;
@@ -682,6 +686,16 @@ final class ProfileMetadataExtractor
             $metadata['display_name'] = $displayName;
         }
 
+        $username = $this->firstScalar($node, ['username', 'login', 'handle', 'slug', 'screen_name', 'preferredUsername']);
+        if ($username !== null) {
+            $metadata['username'] = ltrim($username, '@');
+        }
+
+        $userId = $this->firstIdentifier($node, ['user_id', 'userId', 'uid', 'id', 'externalId', 'member_id', 'profile_id', 'channelId']);
+        if ($userId !== null) {
+            $metadata['user_id'] = $userId;
+        }
+
         $bio = $this->firstScalar($node, ['description', 'about', 'bio', 'summary', 'aboutMe', 'tagline']);
         if ($bio !== null) {
             $metadata['bio'] = $bio;
@@ -714,6 +728,21 @@ final class ProfileMetadataExtractor
             $metadata['location'] = $location;
         }
 
+        $gender = $this->firstScalar($node, ['gender']);
+        if ($gender !== null) {
+            $metadata['gender'] = $gender;
+        }
+
+        $verifiedType = $this->firstScalar($node, ['verified_type', 'verifiedType']);
+        if ($verifiedType !== null) {
+            $metadata['verified_type'] = $verifiedType;
+        }
+
+        $jid = $this->firstScalar($node, ['jid', 'profile_jid', 'user_jid']);
+        if ($jid !== null) {
+            $metadata['jid'] = $jid;
+        }
+
         $followers = $this->firstMetric($node, ['followers', 'follower_count', 'followers_count', 'followersCount']);
         if ($followers !== null) {
             $metadata['followers'] = $followers;
@@ -734,6 +763,31 @@ final class ProfileMetadataExtractor
             $metadata['posts_count'] = $postsCount;
         }
 
+        $playlistCount = $this->firstMetric($node, ['playlist_count', 'playlistCount']);
+        if ($playlistCount !== null) {
+            $metadata['playlist_count'] = $playlistCount;
+        }
+
+        $friends = $this->firstMetric($node, ['friends_count', 'friend_count', 'friendsCount', 'friendCount', 'friends']);
+        if ($friends !== null) {
+            $metadata['friends'] = $friends;
+        }
+
+        $tips = $this->firstMetric($node, ['tips_count', 'tip_count', 'tipsCount', 'tipCount']);
+        if ($tips !== null) {
+            $metadata['tips'] = $tips;
+        }
+
+        $stations = $this->firstMetricOrList($node, ['stations', 'station_count', 'stations_count', 'stationCount', 'stationsCount']);
+        if ($stations !== null) {
+            $metadata['stations'] = $stations;
+        }
+
+        $countries = $this->firstMetricOrList($node, ['countries', 'country_count', 'countries_count', 'countryCount', 'countriesCount']);
+        if ($countries !== null) {
+            $metadata['countries'] = $countries;
+        }
+
         $accountType = $this->firstScalar($node, ['__typename', 'type', 'entityType']);
         if ($accountType !== null) {
             $metadata['account_type'] = $this->normalizeSchemaType($accountType);
@@ -742,6 +796,21 @@ final class ProfileMetadataExtractor
         $verified = $this->firstBoolean($node, ['verified', 'is_verified', 'isVerified']);
         if ($verified !== null) {
             $metadata['is_verified'] = $verified;
+        }
+
+        $isPrivate = $this->firstPrivacyFlag($node, ['is_private', 'isPrivate', 'private', 'protected', 'locked']);
+        if ($isPrivate !== null) {
+            $metadata['is_private'] = $isPrivate;
+        }
+
+        $isPremium = $this->firstBoolean($node, ['is_premium', 'isPremium', 'is_paid', 'isPaid', 'premium']);
+        if ($isPremium !== null) {
+            $metadata['is_premium'] = $isPremium;
+        }
+
+        $showProBadge = $this->firstBoolean($node, ['show_pro_badge', 'showProBadge']);
+        if ($showProBadge !== null) {
+            $metadata['show_pro_badge'] = $showProBadge;
         }
 
         if (($metadata['account_type'] ?? null) === null && is_bool($node['is_community'] ?? null)) {
@@ -852,6 +921,46 @@ final class ProfileMetadataExtractor
     {
         foreach ($keys as $key) {
             $value = $node[$key] ?? null;
+            if (is_array($value)) {
+                $normalizedList = $this->normalizeScalarList($value);
+                if ($normalizedList !== []) {
+                    return count($normalizedList);
+                }
+
+                continue;
+            }
+
+            if (!is_scalar($value)) {
+                continue;
+            }
+
+            $string = trim((string) $value);
+            if ($string !== '') {
+                return $this->extractMetricValue($string);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @param array<int, string> $keys
+     * @return int|float|string|array<int, string>|null
+     */
+    private function firstMetricOrList(array $node, array $keys): int|float|string|array|null
+    {
+        foreach ($keys as $key) {
+            $value = $node[$key] ?? null;
+            if (is_array($value)) {
+                $normalizedList = $this->normalizeScalarList($value);
+                if ($normalizedList !== []) {
+                    return $normalizedList;
+                }
+
+                continue;
+            }
+
             if (!is_scalar($value)) {
                 continue;
             }
@@ -889,6 +998,49 @@ final class ProfileMetadataExtractor
                 if (in_array($lower, ['false', '0', 'no'], true)) {
                     return false;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @param array<int, string> $keys
+     * @return int|string|null
+     */
+    private function firstIdentifier(array $node, array $keys): int|string|null
+    {
+        $value = $this->firstScalar($node, $keys);
+        if ($value === null) {
+            return null;
+        }
+
+        return is_numeric($value) ? (int) $value : $value;
+    }
+
+    /**
+     * @param array<string, mixed> $node
+     * @param array<int, string> $keys
+     */
+    private function firstPrivacyFlag(array $node, array $keys): ?bool
+    {
+        $boolean = $this->firstBoolean($node, $keys);
+        if ($boolean !== null) {
+            return $boolean;
+        }
+
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $node) || !is_scalar($node[$key])) {
+                continue;
+            }
+
+            $value = strtolower(trim((string) $node[$key]));
+            if (in_array($value, ['private', 'locked', 'protected'], true)) {
+                return true;
+            }
+            if (in_array($value, ['public', 'unlocked', 'open'], true)) {
+                return false;
             }
         }
 
@@ -1109,5 +1261,26 @@ final class ProfileMetadataExtractor
         }
 
         return null;
+    }
+
+    /**
+     * @param array<int|string, mixed> $values
+     * @return array<int, string>
+     */
+    private function normalizeScalarList(array $values): array
+    {
+        $normalized = [];
+        foreach ($values as $value) {
+            if (!is_scalar($value)) {
+                continue;
+            }
+
+            $string = trim((string) $value);
+            if ($string !== '') {
+                $normalized[] = $string;
+            }
+        }
+
+        return array_values(array_unique($normalized));
     }
 }

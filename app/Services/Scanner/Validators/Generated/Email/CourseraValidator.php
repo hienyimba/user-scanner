@@ -38,6 +38,8 @@ final class CourseraValidator extends BaseGeneratedValidator
 
     public function check(string $target, array $options = []): ScanResult
     {
+        $startedAt = microtime(true);
+
         try {
             $request = Http::timeout(6)->withOptions([
                 'verify' => (bool) config('scanner.verify_ssl', false),
@@ -56,15 +58,49 @@ final class CourseraValidator extends BaseGeneratedValidator
             }
 
             $response = $request->post('https://www.coursera.org/api/userAccounts.v1?action=getLoginMethods&email=' . urlencode($target), []);
+            if ($blocked = $this->detectBlockedOrChallenged($response)) {
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    $blocked[0],
+                    $blocked[1],
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+                );
+            }
+
             $data = $response->json();
 
             if (!is_array($data) || !array_key_exists('loginMethods', $data)) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', "Missing 'loginMethods' in response, report it on github", mode: $this->mode(), key: $this->key());
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Error',
+                    "Missing 'loginMethods' in response, report it on github",
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+                );
             }
 
             $methods = $data['loginMethods'];
             if (!is_array($methods)) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected data type for loginMethods: ' . gettype($methods) . ', report it on github', mode: $this->mode(), key: $this->key());
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Error',
+                    'Unexpected data type for loginMethods: ' . gettype($methods) . ', report it on github',
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+                );
             }
 
             if (count($methods) > 0) {
@@ -77,21 +113,55 @@ final class CourseraValidator extends BaseGeneratedValidator
                 ]);
                 $metadata = [
                     'public_email' => $target,
+                    'account_exists' => true,
                     'login_methods' => $normalizedMethods,
-                    'sources' => ['api_json'],
+                    'sensitive_fields' => ['login_methods'],
+                    'sources' => ['api_json', 'login_methods_api'],
                 ];
 
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Registered',
+                    '',
+                    $extra,
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    confidence: 0.86,
+                    metadata: $this->mergeRequestDiagnostics($metadata, $options, $response, $startedAt),
+                );
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
+            return new ScanResult(
+                $target,
+                $this->category(),
+                $this->siteName(),
+                $this->siteUrl(),
+                'Not Registered',
+                '',
+                mode: $this->mode(),
+                key: $this->key(),
+                metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+            );
         } catch (\Throwable $e) {
             $message = strtolower($e->getMessage());
             $reason = str_contains($message, 'timed out')
                 ? (str_contains($message, 'read') ? 'Server took too long to respond (Coursera)' : 'Connection timed out (Coursera)')
                 : $e->getMessage();
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $reason, mode: $this->mode(), key: $this->key());
+            return new ScanResult(
+                $target,
+                $this->category(),
+                $this->siteName(),
+                $this->siteUrl(),
+                'Error',
+                $reason,
+                mode: $this->mode(),
+                key: $this->key(),
+                metadata: $this->requestDiagnostics($options, null, $startedAt),
+            );
         }
     }
 

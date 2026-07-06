@@ -38,6 +38,8 @@ final class AllenValidator extends BaseGeneratedValidator
 
     public function check(string $target, array $options = []): ScanResult
     {
+        $startedAt = microtime(true);
+
         try {
             $request = Http::timeout(10)->withOptions([
                 'verify' => (bool) config('scanner.verify_ssl', false),
@@ -59,8 +61,18 @@ final class AllenValidator extends BaseGeneratedValidator
                 'identity_type' => 'EMAIL',
             ]);
 
-            if ($response->status() === 403) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Blocked by Allen WAF (403)', mode: $this->mode(), key: $this->key());
+            if ($blocked = $this->detectBlockedOrChallenged($response)) {
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    $blocked[0],
+                    $blocked[1],
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+                );
             }
 
             $data = $response->json();
@@ -76,23 +88,73 @@ final class AllenValidator extends BaseGeneratedValidator
                     }
                 }
 
-                $metadata = ['public_email' => $target, 'sources' => ['api_json']];
+                $metadata = [
+                    'public_email' => $target,
+                    'account_exists' => true,
+                    'sources' => ['api_json', 'identity_api'],
+                ];
                 $extra = $maskedPhone !== null && $maskedPhone !== ''
                     ? $this->metadataSummary(['Masked phone' => '+91' . $maskedPhone])
                     : '';
                 if ($maskedPhone !== null && $maskedPhone !== '') {
                     $metadata['phone'] = '+91' . $maskedPhone;
+                    $metadata['sensitive_fields'] = ['phone'];
                 }
 
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Registered',
+                    '',
+                    $extra,
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    confidence: $maskedPhone !== null && $maskedPhone !== '' ? 0.9 : 0.84,
+                    metadata: $this->mergeRequestDiagnostics($metadata, $options, $response, $startedAt),
+                );
             }
             if (str_contains($reason, 'Invalid email')) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Not Registered',
+                    '',
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+                );
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unknown response reason: ' . $reason, mode: $this->mode(), key: $this->key());
+            return new ScanResult(
+                $target,
+                $this->category(),
+                $this->siteName(),
+                $this->siteUrl(),
+                'Error',
+                'Unknown response reason: ' . $reason,
+                mode: $this->mode(),
+                key: $this->key(),
+                metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+            );
         } catch (\Throwable $e) {
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $e->getMessage(), mode: $this->mode(), key: $this->key());
+            $message = strtolower($e->getMessage());
+            $reason = str_contains($message, 'timed out') ? 'Connection timed out' : $e->getMessage();
+
+            return new ScanResult(
+                $target,
+                $this->category(),
+                $this->siteName(),
+                $this->siteUrl(),
+                'Error',
+                $reason,
+                mode: $this->mode(),
+                key: $this->key(),
+                metadata: $this->requestDiagnostics($options, null, $startedAt),
+            );
         }
     }
 

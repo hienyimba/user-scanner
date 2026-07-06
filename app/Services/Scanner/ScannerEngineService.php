@@ -32,13 +32,18 @@ final class ScannerEngineService
         $selected = $plan['validators'];
 
         $results = [];
+        $attemptOffset = 0;
         foreach ($expandedTargets as $index => $expandedTarget) {
             if ($index !== 0 && (float) ($options['delay'] ?? 0) > 0) {
                 usleep((int) (((float) $options['delay']) * 1_000_000));
             }
 
             foreach ($selected as $validator) {
-                $result = $this->runValidator($validator, $expandedTarget, $mode, $options);
+                $result = $this->runValidator($validator, $expandedTarget, $mode, [
+                    ...$options,
+                    'proxy_offset' => $attemptOffset,
+                ]);
+                $attemptOffset++;
                 if ((bool) ($options['only_found'] ?? false) && !in_array($result->status, ['Found', 'Registered'], true)) {
                     continue;
                 }
@@ -218,12 +223,50 @@ final class ScannerEngineService
             ), $validator, $options);
         }
 
-        $proxy = Arr::get($options, 'use_proxy') ? $this->proxyManager->next() : null;
         if (array_key_exists('proxy', $options)) {
             $proxy = is_string($options['proxy']) && $options['proxy'] !== ''
                 ? $this->proxyManager->resolve($options['proxy'])
                 : null;
+
+            return $this->executeValidator($validator, $target, $mode, $options, $proxy);
         }
+
+        if ((bool) Arr::get($options, 'use_proxy', false)) {
+            return $this->runValidatorWithProxyPolicy($validator, $target, $mode, $options);
+        }
+
+        return $this->executeValidator($validator, $target, $mode, $options, null);
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function runValidatorWithProxyPolicy(ValidatorContract $validator, string $target, string $mode, array $options): ScanResult
+    {
+        return ProxyExecutionPolicy::run(
+            proxyManager: $this->proxyManager,
+            options: $options,
+            offset: (int) Arr::get($options, 'proxy_offset', 0),
+            attempt: fn (?string $proxy): ScanResult => $this->executeValidator($validator, $target, $mode, $options, $proxy),
+            errorResult: fn (string $reason): ScanResult => ScanResult::fromArray([
+                'target' => $target,
+                'category' => strtolower($validator->category()),
+                'site_name' => $validator->siteName(),
+                'url' => $validator->siteUrl(),
+                'status' => 'Error',
+                'reason' => $reason,
+                'mode' => $mode,
+                'key' => $validator->key(),
+            ]),
+            fallbackWithoutProxyWhenPoolEmpty: true,
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     */
+    private function executeValidator(ValidatorContract $validator, string $target, string $mode, array $options, ?string $proxy): ScanResult
+    {
         $rawResult = $validator->check($target, [
             ...$options,
             'proxy' => $proxy,

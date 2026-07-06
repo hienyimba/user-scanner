@@ -9,6 +9,8 @@ use App\Http\Requests\PublicScanRequest;
 use App\Services\Scanner\MetadataCapabilityService;
 use App\Services\Scanner\QueuedScanService;
 use App\Services\Scanner\ScannerEngineService;
+use App\Support\ModuleCatalogPresenter;
+use App\Support\ScanRunPresenter;
 use App\Support\ScanRunStore;
 use Illuminate\Http\JsonResponse;
 use RuntimeException;
@@ -50,7 +52,7 @@ final class PublicScanController extends Controller
         ], 202);
     }
 
-    public function show(string $runId, ScanRunStore $store): JsonResponse
+    public function show(string $runId, ScanRunStore $store, ScanRunPresenter $presenter): JsonResponse
     {
         $run = $store->getRun($runId);
         if (!$run) {
@@ -62,35 +64,20 @@ final class PublicScanController extends Controller
 
         return response()->json([
             'ok' => true,
-            'run' => [
-                'id' => $run['id'],
-                'mode' => $run['mode'],
-                'status' => $run['status'],
-                'progress' => ($run['total'] ?? 0) > 0 ? round((($run['processed'] ?? 0) / $run['total']) * 100, 2) : 0,
-                'processed' => $run['processed'],
-                'total' => $run['total'],
-                'error' => $run['error'],
-                'created_at' => $run['created_at'],
-                'updated_at' => $run['updated_at'],
-                'completed_at' => $run['completed_at'],
-                'target' => $run['targets'][0] ?? null,
-                'category' => $run['options']['category'] ?? null,
-                'show_hits' => $showHits,
-            ],
+            'run' => $presenter->publicApiRun($run, $showHits),
             'results' => $results,
         ]);
     }
 
-    public function modules(string $mode, ScannerEngineService $engine, MetadataCapabilityService $metadataCapability): JsonResponse
+    public function modules(
+        string $mode,
+        ScannerEngineService $engine,
+        MetadataCapabilityService $metadataCapability,
+        ModuleCatalogPresenter $presenter,
+    ): JsonResponse
     {
         abort_unless(in_array($mode, ['username', 'email'], true), 404);
 
-        return response()->json([
-            'ok' => true,
-            'mode' => $mode,
-            'metadata_summary' => $metadataCapability->summary(),
-            'categories' => $engine->listCategories($mode),
-            'modules' => $engine->listModules($mode),
-        ]);
+        return response()->json($presenter->apiPayload($mode, $engine, $metadataCapability));
     }
 }

@@ -12,6 +12,9 @@ use Illuminate\Support\Facades\Http;
 
 abstract class BaseGeneratedValidator implements ValidatorContract
 {
+    /** @var array<string, mixed> */
+    private array $lastRequestDiagnostics = [];
+
     public function publicProfileUrl(string $target): ?string
     {
         $siteUrl = $this->resolveTemplateUrl($this->siteUrl(), $target);
@@ -120,6 +123,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
     protected function makeRequest(string $target, array $options = []): Response
     {
+        $startedAt = microtime(true);
         $request = Http::timeout($this->timeoutSeconds())
             ->withOptions([
                 'allow_redirects' => $this->followRedirects(),
@@ -148,22 +152,35 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
 
         if ($method === 'GET') {
-            return $request->get($url, $query);
+            $response = $request->get($url, $query);
+            $this->rememberRequestDiagnostics($response, $options['proxy'] ?? null, $startedAt);
+
+            return $response;
         }
 
         if ($method === 'POST') {
             if ($rawBody !== null) {
-                return $request->withBody($rawBody, $contentType)->post($url);
+                $response = $request->withBody($rawBody, $contentType)->post($url);
+                $this->rememberRequestDiagnostics($response, $options['proxy'] ?? null, $startedAt);
+
+                return $response;
             }
 
             if ($body !== []) {
-                return match ($this->requestBodyMode()) {
+                $response = match ($this->requestBodyMode()) {
                     'json' => $request->post($url, $body),
                     default => $request->asForm()->post($url, $body),
                 };
+
+                $this->rememberRequestDiagnostics($response, $options['proxy'] ?? null, $startedAt);
+
+                return $response;
             }
 
-            return $request->post($url);
+            $response = $request->post($url);
+            $this->rememberRequestDiagnostics($response, $options['proxy'] ?? null, $startedAt);
+
+            return $response;
         }
 
         /** @var Response $response */
@@ -171,17 +188,22 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             'query' => $query,
             'form_params' => $body,
         ]);
+        $this->rememberRequestDiagnostics($response, $options['proxy'] ?? null, $startedAt);
 
         return $response;
     }
 
     public function check(string $target, array $options = []): ScanResult
     {
+        $startedAt = microtime(true);
+        $this->lastRequestDiagnostics = [];
+
         try {
             $response = $this->makeRequest($target, $options);
             $challenge = $this->detectBlockedOrChallenged($response);
             [$status, $reason] = $challenge ?? $this->parseConnectorResponse($response, $target);
             $structuredMetadata = $challenge === null ? $this->buildStructuredMetadata($response, $target, $status) : [];
+            $structuredMetadata = $this->mergeRequestDiagnostics($structuredMetadata, $options, $response, $startedAt);
             $extra = $challenge === null ? $this->buildExtraMetadata($response, $target, $status) : '';
 
             return new ScanResult(
@@ -205,8 +227,57 @@ abstract class BaseGeneratedValidator implements ValidatorContract
                 default => $e->getMessage(),
             };
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $reason, mode: $this->mode(), key: $this->key());
+            return new ScanResult(
+                $target,
+                $this->category(),
+                $this->siteName(),
+                $this->siteUrl(),
+                'Error',
+                $reason,
+                mode: $this->mode(),
+                key: $this->key(),
+                metadata: $this->mergeRequestDiagnostics([], $options, null, $startedAt),
+            );
         }
+    }
+
+    /**
+     * @param array<string, mixed> $metadata
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
+    protected function mergeRequestDiagnostics(array $metadata, array $options = [], ?Response $response = null, ?float $startedAt = null): array
+    {
+        return array_merge($metadata, $this->requestDiagnostics($options, $response, $startedAt));
+    }
+
+    /**
+     * @param array<string, mixed> $options
+     * @return array<string, mixed>
+     */
+    protected function requestDiagnostics(array $options = [], ?Response $response = null, ?float $startedAt = null): array
+    {
+        if ($response !== null) {
+            return $this->buildRequestDiagnosticsPayload(
+                $options['proxy'] ?? null,
+                $response->status(),
+                microtime(true) - ($startedAt ?? microtime(true)),
+            );
+        }
+
+        if ($this->lastRequestDiagnostics !== []) {
+            return $this->lastRequestDiagnostics;
+        }
+
+        if ($startedAt === null) {
+            return [];
+        }
+
+        return $this->buildRequestDiagnosticsPayload(
+            $options['proxy'] ?? null,
+            null,
+            microtime(true) - $startedAt,
+        );
     }
 
     protected function looksLikeHtml(Response $response): bool
@@ -575,6 +646,31 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
 
         return $hasSignal ? $metadata : [];
+    }
+
+    protected function normalizeAbsoluteUrlValue(mixed $value, string $baseUrl): ?string
+    {
+        return $this->normalizeAbsoluteUrl($value, $baseUrl);
+    }
+
+    protected function normalizeDateMetadataValue(mixed $value): ?string
+    {
+        return $this->normalizeDateValue($value);
+    }
+
+    protected function normalizeIntegerMetadataValue(mixed $value): ?int
+    {
+        return $this->normalizeIntegerValue($value);
+    }
+
+    protected function normalizePublicEmailValue(mixed $value): ?string
+    {
+        return $this->normalizePublicEmail($value);
+    }
+
+    protected function nonEmptyStringValue(mixed $value): ?string
+    {
+        return $this->nonEmptyString($value);
     }
 
     /**
@@ -1221,5 +1317,65 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
 
         return array_values(array_unique($items));
+    }
+
+    private function rememberRequestDiagnostics(Response $response, mixed $proxy, float $startedAt): void
+    {
+        $this->lastRequestDiagnostics = $this->buildRequestDiagnosticsPayload(
+            $proxy,
+            $response->status(),
+            microtime(true) - $startedAt,
+        );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function buildRequestDiagnosticsPayload(mixed $proxy, ?int $httpStatus, float $durationSeconds): array
+    {
+        $metadata = [
+            'latency_ms' => max(0, (int) round($durationSeconds * 1000)),
+        ];
+
+        if ($httpStatus !== null) {
+            $metadata['http_status'] = $httpStatus;
+        }
+
+        $proxyUsed = $this->sanitizeProxyLabel($proxy);
+        if ($proxyUsed !== null) {
+            $metadata['proxy_used'] = $proxyUsed;
+        }
+
+        return $metadata;
+    }
+
+    private function sanitizeProxyLabel(mixed $proxy): ?string
+    {
+        if (!is_scalar($proxy)) {
+            return null;
+        }
+
+        $proxyString = trim((string) $proxy);
+        if ($proxyString === '') {
+            return null;
+        }
+
+        if (!preg_match('/^[a-z0-9]+:\/\//i', $proxyString)) {
+            $proxyString = 'http://' . $proxyString;
+        }
+
+        $parts = parse_url($proxyString);
+        if ($parts === false) {
+            return trim((string) $proxy);
+        }
+
+        $host = trim((string) ($parts['host'] ?? ''));
+        if ($host === '') {
+            return trim((string) $proxy);
+        }
+
+        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+
+        return $host . $port;
     }
 }

@@ -4,36 +4,22 @@ declare(strict_types=1);
 
 namespace App\Http\Requests;
 
-use Illuminate\Foundation\Http\FormRequest;
-
-final class RunScanRequest extends FormRequest
+final class RunScanRequest extends AbstractScanRequest
 {
-    public function authorize(): bool
-    {
-        return true;
-    }
-
     protected function prepareForValidation(): void
     {
-        $moduleKeys = $this->input('module_keys', []);
-        if (is_string($moduleKeys)) {
-            $moduleKeys = array_values(array_filter(array_map('trim', explode(',', $moduleKeys))));
-        }
-
         $this->merge([
-            'target' => trim((string) $this->input('target', '')),
-            'category' => trim((string) $this->input('category', '')) ?: null,
-            'module_keys' => is_array($moduleKeys)
-                ? array_values(array_filter(array_map(static fn ($value): string => trim((string) $value), $moduleKeys)))
-                : [],
-            'use_proxy' => filter_var($this->input('use_proxy', false), FILTER_VALIDATE_BOOL),
-            'validate_proxies' => filter_var($this->input('validate_proxies', false), FILTER_VALIDATE_BOOL),
-            'allow_loud' => filter_var($this->input('allow_loud', false), FILTER_VALIDATE_BOOL),
-            'no_nsfw' => filter_var($this->input('no_nsfw', false), FILTER_VALIDATE_BOOL),
-            'only_found' => filter_var($this->input('only_found', false), FILTER_VALIDATE_BOOL),
-            'verbose' => filter_var($this->input('verbose', false), FILTER_VALIDATE_BOOL),
-            'delay' => is_numeric($this->input('delay')) ? (float) $this->input('delay') : 0.0,
-            'stop' => is_numeric($this->input('stop')) ? (int) $this->input('stop') : 100,
+            'target' => $this->normalizeTarget(),
+            'category' => $this->normalizeCategory(),
+            'module_keys' => $this->normalizeModuleKeys(),
+            'use_proxy' => $this->normalizeBoolean('use_proxy'),
+            'validate_proxies' => $this->normalizeBoolean('validate_proxies'),
+            'allow_loud' => $this->normalizeBoolean('allow_loud'),
+            'no_nsfw' => $this->normalizeBoolean('no_nsfw'),
+            'only_found' => $this->normalizeBoolean('only_found'),
+            'verbose' => $this->normalizeBoolean('verbose'),
+            'delay' => $this->normalizeFloat('delay', 0.0),
+            'stop' => $this->normalizeInt('stop', 100),
         ]);
     }
 
@@ -42,12 +28,8 @@ final class RunScanRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'mode' => ['required', 'in:username,email'],
+        return $this->baseScanRules(includeModuleKeys: true) + [
             'target' => ['required', 'string', 'max:255'],
-            'category' => ['nullable', 'string', 'max:64'],
-            'module_keys' => ['array'],
-            'module_keys.*' => ['string', 'max:100'],
             'use_proxy' => ['nullable', 'boolean'],
             'validate_proxies' => ['nullable', 'boolean'],
             'allow_loud' => ['nullable', 'boolean'],

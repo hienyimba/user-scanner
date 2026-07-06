@@ -15,6 +15,7 @@ final class MetadataReadinessCommandTest extends TestCase
         @unlink($outputPath);
 
         $summary = app(MetadataCapabilityService::class)->summary();
+        $emailFocus = app(MetadataCapabilityService::class)->validationGapSummary('email');
 
         $this->artisan('scanner:metadata-readiness', [
             '--output' => $outputPath,
@@ -33,6 +34,12 @@ final class MetadataReadinessCommandTest extends TestCase
         $this->assertSame($summary['validated_level_4'], $report['summary']['validated_level_4']);
         $this->assertGreaterThan(0, $report['mode_summary']['username']['documented_modules']);
         $this->assertGreaterThan(0, $report['mode_summary']['email']['documented_modules']);
+        $this->assertSame($emailFocus['promotion_candidates'], $report['email_focus']['promotion_candidates']);
+        $this->assertSame($emailFocus['promotion_candidates_with_baseline_targets'], $report['email_focus']['promotion_candidates_with_baseline_targets']);
+        $this->assertSame($emailFocus['promotion_candidates_without_baseline_targets'], $report['email_focus']['promotion_candidates_without_baseline_targets']);
+        $this->assertSame($emailFocus['safety_blocked_modules'], $report['email_focus']['safety_blocked_modules']);
+        $this->assertContains('gitlab', $report['email_focus']['promotion_candidate_platforms']);
+        $this->assertContains('gmail', $report['email_focus']['safety_blocked_platforms']);
         $this->assertSame(250, $report['thresholds']['min_documented']);
         $this->assertSame(150, $report['thresholds']['min_level3']);
         $this->assertSame(50, $report['thresholds']['min_level4']);

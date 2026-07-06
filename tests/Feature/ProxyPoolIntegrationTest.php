@@ -137,6 +137,27 @@ final class ProxyPoolIntegrationTest extends TestCase
         $this->assertStringContainsString('@disp.oxylabs.io:8007', ProxyRetryValidator::$seenProxies[1]);
     }
 
+    public function test_sync_engine_retries_once_with_a_fallback_proxy_on_proxy_shaped_errors(): void
+    {
+        ProxyRetryValidator::$seenProxies = [];
+        $this->swapValidators(new ProxyRetryValidator());
+
+        $result = app(ScannerEngineService::class)->runPlannedValidator(
+            mode: 'username',
+            validatorKey: 'proxy-retry',
+            target: 'hienyimba',
+            options: [
+                'use_proxy' => true,
+                'proxy_list' => "disp.oxylabs.io:8008\ndisp.oxylabs.io:8007",
+            ],
+        );
+
+        $this->assertSame('Found', $result->status);
+        $this->assertCount(2, ProxyRetryValidator::$seenProxies);
+        $this->assertStringContainsString('@disp.oxylabs.io:8008', ProxyRetryValidator::$seenProxies[0]);
+        $this->assertStringContainsString('@disp.oxylabs.io:8007', ProxyRetryValidator::$seenProxies[1]);
+    }
+
     public function test_api_tester_page_shows_sanitized_proxy_list_without_credentials(): void
     {
         $response = $this->get('/api-tester');

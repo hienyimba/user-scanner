@@ -57,16 +57,20 @@ final class MetadataCapabilityInventoryTest extends TestCase
         $donatealerts = $service->forModule('username', 'donatealerts');
         $dribbble = $service->forModule('username', 'dribbble');
         $dockerhub = $service->forModule('username', 'dockerhub');
+        $duolingoEmail = $service->forModule('email', 'duolingo');
         $duolingo = $service->forModule('username', 'duolingo');
         $etoro = $service->forModule('username', 'etoro');
+        $eventbriteEmail = $service->forModule('email', 'eventbrite');
         $flickr = $service->forModule('username', 'flickr');
         $freesound = $service->forModule('username', 'freesound');
         $freelancer = $service->forModule('username', 'freelancer');
+        $githubEmail = $service->forModule('email', 'github');
         $github = $service->forModule('username', 'github');
         $ghostForum = $service->forModule('username', 'ghost_forum');
         $gitea = $service->forModule('username', 'gitea');
         $githubgist = $service->forModule('username', 'githubgist');
         $gitlab = $service->forModule('username', 'gitlab');
+        $gravatarEmail = $service->forModule('email', 'gravatar');
         $gravatar = $service->forModule('username', 'gravatar');
         $gumroad = $service->forModule('username', 'gumroad');
         $gpodderNet = $service->forModule('username', 'gpodder_net');
@@ -81,6 +85,8 @@ final class MetadataCapabilityInventoryTest extends TestCase
         $ifttt = $service->forModule('username', 'ifttt');
         $itchIo = $service->forModule('username', 'itch_io');
         $jupyterForum = $service->forModule('username', 'jupyter_forum');
+        $adobeEmail = $service->forModule('email', 'adobe');
+        $appletvEmail = $service->forModule('email', 'appletv');
         $etsy = $service->forModule('email', 'etsy');
         $vivinoEmail = $service->forModule('email', 'vivino');
         $kaggle = $service->forModule('username', 'kaggle');
@@ -127,6 +133,7 @@ final class MetadataCapabilityInventoryTest extends TestCase
         $soundcloud = $service->forModule('username', 'soundcloud');
         $spotify = $service->forModule('username', 'spotify');
         $trello = $service->forModule('username', 'trello');
+        $venmo = $service->forModule('username', 'venmo');
         $vimeo = $service->forModule('username', 'vimeo');
         $vivino = $service->forModule('username', 'vivino');
         $warpcast = $service->forModule('username', 'warpcast');
@@ -228,6 +235,7 @@ final class MetadataCapabilityInventoryTest extends TestCase
         $this->assertNotNull($substack);
         $this->assertNotNull($telegram);
         $this->assertNotNull($trello);
+        $this->assertNotNull($venmo);
         $this->assertNotNull($vimeo);
         $this->assertNotNull($vivino);
         $this->assertNotNull($warpcast);
@@ -359,12 +367,30 @@ final class MetadataCapabilityInventoryTest extends TestCase
         $this->assertSame(4, $jupyterForum['validated_level']);
         $this->assertSame(['bollwyvl'], $jupyterForum['validated_targets']);
         $this->assertContains('torvalds', $github['validated_targets']);
+        $this->assertNotNull($adobeEmail);
+        $this->assertSame(4, $adobeEmail['validated_level']);
+        $this->assertSame(['baseline_email_tertiary'], $adobeEmail['validated_targets']);
+        $this->assertNotNull($appletvEmail);
+        $this->assertSame(3, $appletvEmail['validated_level']);
+        $this->assertSame(['baseline_email_tertiary'], $appletvEmail['validated_targets']);
         $this->assertGreaterThanOrEqual(3, $etsy['level']);
         $this->assertSame(4, $etsy['validated_level']);
-        $this->assertSame(['andrew.brumbelow@gmail.com'], $etsy['validated_targets']);
+        $this->assertSame(['baseline_email_tertiary'], $etsy['validated_targets']);
+        $this->assertNotNull($eventbriteEmail);
+        $this->assertSame(4, $eventbriteEmail['validated_level']);
+        $this->assertSame(['baseline_email_primary', 'baseline_email_tertiary'], $eventbriteEmail['validated_targets']);
+        $this->assertNotNull($githubEmail);
+        $this->assertSame(3, $githubEmail['validated_level']);
+        $this->assertSame(['baseline_email_primary', 'baseline_email_tertiary'], $githubEmail['validated_targets']);
+        $this->assertNotNull($gravatarEmail);
+        $this->assertSame(4, $gravatarEmail['validated_level']);
+        $this->assertSame(['baseline_email_tertiary'], $gravatarEmail['validated_targets']);
+        $this->assertNotNull($duolingoEmail);
+        $this->assertSame(4, $duolingoEmail['validated_level']);
+        $this->assertSame(['baseline_email_tertiary'], $duolingoEmail['validated_targets']);
         $this->assertGreaterThanOrEqual(3, $vivinoEmail['level']);
         $this->assertSame(3, $vivinoEmail['validated_level']);
-        $this->assertSame(['hienyimba@gmail.com'], $vivinoEmail['validated_targets']);
+        $this->assertSame(['baseline_email_primary'], $vivinoEmail['validated_targets']);
         $this->assertSame(4, $kaggle['validated_level']);
         $this->assertSame(['serigne'], $kaggle['validated_targets']);
         $this->assertSame(4, $keybase['validated_level']);
@@ -459,6 +485,10 @@ final class MetadataCapabilityInventoryTest extends TestCase
         $this->assertSame(['durov'], $telegram['validated_targets']);
         $this->assertSame(4, $trello['validated_level']);
         $this->assertSame(['trello'], $trello['validated_targets']);
+        $this->assertSame(4, $venmo['level']);
+        $this->assertSame('laravel-public-api-enrichment', $venmo['strategy']);
+        $this->assertSame(4, $venmo['validated_level']);
+        $this->assertSame(['eodioko'], $venmo['validated_targets']);
         $this->assertSame(4, $vimeo['validated_level']);
         $this->assertSame(['staff'], $vimeo['validated_targets']);
         $this->assertSame(4, $vivino['validated_level']);
@@ -478,5 +508,58 @@ final class MetadataCapabilityInventoryTest extends TestCase
         $this->assertSame(['openai'], $x['validated_targets']);
         $this->assertSame(4, $youtube['validated_level']);
         $this->assertSame(['openai'], $youtube['validated_targets']);
+    }
+
+    public function test_private_email_capability_overrides_are_available_for_registry_and_audit_consumers(): void
+    {
+        $service = app(MetadataCapabilityService::class);
+
+        $gitlabEmail = $service->forModule('email', 'gitlab');
+        $githubEmail = $service->forModule('email', 'github');
+        $gmailEmail = $service->forModule('email', 'gmail');
+        $bibleEmail = $service->forModule('email', 'bible');
+        $foursquareEmail = $service->forModule('email', 'foursquare');
+        $smuleEmail = $service->forModule('email', 'smule');
+        $libravatarEmail = $service->forModule('email', 'libravatar');
+        $unavatarEmail = $service->forModule('email', 'unavatar');
+
+        $this->assertNotNull($gitlabEmail);
+        $this->assertSame(4, $gitlabEmail['level']);
+        $this->assertSame('public-evidence-pivot', $gitlabEmail['strategy']);
+        $this->assertStringContainsString('Gravatar evidence', $gitlabEmail['notes']);
+
+        $this->assertNotNull($githubEmail);
+        $this->assertSame(4, $githubEmail['level']);
+        $this->assertSame('laravel-public-evidence-account-enrichment', $githubEmail['strategy']);
+
+        $this->assertNotNull($bibleEmail);
+        $this->assertSame(4, $bibleEmail['level']);
+        $this->assertSame('public-evidence-pivot', $bibleEmail['strategy']);
+        $this->assertStringContainsString('user id', strtolower($bibleEmail['notes']));
+
+        $this->assertNotNull($foursquareEmail);
+        $this->assertSame(4, $foursquareEmail['level']);
+        $this->assertSame('public-evidence-pivot', $foursquareEmail['strategy']);
+        $this->assertStringContainsString('hydration metadata', strtolower($foursquareEmail['notes']));
+
+        $this->assertNotNull($smuleEmail);
+        $this->assertSame(4, $smuleEmail['level']);
+        $this->assertSame('public-evidence-pivot', $smuleEmail['strategy']);
+        $this->assertStringContainsString('jid', strtolower($smuleEmail['notes']));
+
+        $this->assertNotNull($libravatarEmail);
+        $this->assertSame(3, $libravatarEmail['level']);
+        $this->assertSame('avatar-evidence-pivot', $libravatarEmail['strategy']);
+        $this->assertStringContainsString('avatar evidence', strtolower($libravatarEmail['notes']));
+
+        $this->assertNotNull($unavatarEmail);
+        $this->assertSame(3, $unavatarEmail['level']);
+        $this->assertSame('avatar-evidence-pivot', $unavatarEmail['strategy']);
+        $this->assertStringContainsString('avatar evidence', strtolower($unavatarEmail['notes']));
+
+        $this->assertNotNull($gmailEmail);
+        $this->assertSame(0, $gmailEmail['level']);
+        $this->assertSame('safety-blocked-placeholder', $gmailEmail['strategy']);
+        $this->assertStringContainsString('intentionally skipped', $gmailEmail['notes']);
     }
 }

@@ -46,7 +46,9 @@ final class MetadataEnrichmentService
         $metadata = PublicMetadataNormalizer::normalize($metadata);
         $externalLinks = PublicMetadataNormalizer::normalizePublicLinks($metadata['external_links'] ?? []);
         $metadata['external_links'] = $externalLinks;
-        $metadata['status_detail'] = $this->determineStatusDetail($normalizedStatus, $result->reason);
+        $metadata['status_detail'] = is_string($metadata['status_detail'] ?? null) && trim((string) $metadata['status_detail']) !== ''
+            ? trim((string) $metadata['status_detail'])
+            : $this->determineStatusDetail($normalizedStatus, $result->reason);
         $metadata['evidence'] = $this->buildEvidence($result, $profileUrl, $metadata);
         $derivedObservedLevel = $this->determineObservedMetadataLevel($normalizedStatus, $profileUrl, $metadata);
         $metadata['observed_metadata_level'] = $existingObservedLevel !== null
@@ -84,7 +86,6 @@ final class MetadataEnrichmentService
         }
 
         unset(
-            $metadata['status_detail'],
             $metadata['observed_metadata_level'],
             $metadata['platform'],
         );
@@ -352,6 +353,11 @@ final class MetadataEnrichmentService
     private function mergeMetadata(array $metadata, array $newMetadata): array
     {
         foreach ($newMetadata as $key => $value) {
+            if (in_array($key, ['blocked_metadata_fields', 'sensitive_fields'], true)) {
+                $metadata[$key] = $this->mergeStringList([], is_array($value) ? $value : []);
+                continue;
+            }
+
             if ($value === null || $value === '' || $value === []) {
                 continue;
             }
@@ -580,6 +586,9 @@ final class MetadataEnrichmentService
                 'status_detail',
                 'observed_metadata_level',
                 'platform',
+                'http_status',
+                'latency_ms',
+                'proxy_used',
             ], true)) {
                 continue;
             }
@@ -645,6 +654,9 @@ final class MetadataEnrichmentService
                 'status_detail',
                 'observed_metadata_level',
                 'platform',
+                'http_status',
+                'latency_ms',
+                'proxy_used',
             ], true)) {
                 continue;
             }

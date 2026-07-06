@@ -26,50 +26,8 @@ Artisan::command(
     function (MetadataCapabilityService $capability): int {
         $inventory = $capability->all();
         $summary = $capability->summary();
-
-        $modeSummary = [
-            'username' => [
-                'documented_modules' => 0,
-                'level_3_plus' => 0,
-                'level_4' => 0,
-                'validated_modules' => 0,
-                'validated_level_3_plus' => 0,
-                'validated_level_4' => 0,
-            ],
-            'email' => [
-                'documented_modules' => 0,
-                'level_3_plus' => 0,
-                'level_4' => 0,
-                'validated_modules' => 0,
-                'validated_level_3_plus' => 0,
-                'validated_level_4' => 0,
-            ],
-        ];
-
-        foreach ($inventory as $record) {
-            $mode = (string) ($record['mode'] ?? '');
-            if (!isset($modeSummary[$mode])) {
-                continue;
-            }
-
-            $modeSummary[$mode]['documented_modules']++;
-            if ((int) ($record['level'] ?? 0) >= 3) {
-                $modeSummary[$mode]['level_3_plus']++;
-            }
-            if ((int) ($record['level'] ?? 0) >= 4) {
-                $modeSummary[$mode]['level_4']++;
-            }
-            if (($record['validated_level'] ?? null) !== null) {
-                $modeSummary[$mode]['validated_modules']++;
-                $validatedLevel = (int) $record['validated_level'];
-                if ($validatedLevel >= 3) {
-                    $modeSummary[$mode]['validated_level_3_plus']++;
-                }
-                if ($validatedLevel >= 4) {
-                    $modeSummary[$mode]['validated_level_4']++;
-                }
-            }
-        }
+        $modeSummary = $capability->modeSummary();
+        $emailFocus = $capability->validationGapSummary('email');
 
         $thresholds = [
             'min_documented' => (int) $this->option('min-documented'),
@@ -84,6 +42,7 @@ Artisan::command(
             'generated_at' => now()->toIso8601String(),
             'summary' => $summary,
             'mode_summary' => $modeSummary,
+            'email_focus' => $emailFocus,
             'thresholds' => $thresholds,
         ];
 
@@ -110,6 +69,10 @@ Artisan::command(
                 ['Validated level 4', (string) $summary['validated_level_4']],
                 ['Username documented', (string) $modeSummary['username']['documented_modules']],
                 ['Email documented', (string) $modeSummary['email']['documented_modules']],
+                ['Email promotion candidates', (string) $emailFocus['promotion_candidates']],
+                ['Email candidates with baselines', (string) $emailFocus['promotion_candidates_with_baseline_targets']],
+                ['Email candidates without baselines', (string) $emailFocus['promotion_candidates_without_baseline_targets']],
+                ['Email safety-blocked', (string) $emailFocus['safety_blocked_modules']],
             ],
         );
 
@@ -187,6 +150,7 @@ Artisan::command(
     {--max-broken=0 : Maximum allowed broken modules from the supplied revalidation report}',
     function (MetadataCapabilityService $capability): int {
         $summary = $capability->summary();
+        $emailFocus = $capability->validationGapSummary('email');
         $failures = [];
 
         $requirements = [
@@ -341,6 +305,7 @@ Artisan::command(
             'strict_live_level3_required' => (bool) $this->option('require-live-level3'),
             'strict_overlay_stability_required' => (bool) $this->option('require-stable-overlays'),
             'summary' => $summary,
+            'email_focus' => $emailFocus,
             'requirements' => $requirements,
             'revalidation' => $revalidationReport,
         ];
@@ -581,6 +546,11 @@ Artisan::command(
                 ['Modules requested', (string) $summary['modules_requested']],
                 ['Modules with proposed validation', (string) $summary['modules_with_proposed_validation']],
                 ['Modules below documented', (string) $summary['modules_below_documented_level']],
+                ['Stable modules', (string) ($summary['stable_modules'] ?? 0)],
+                ['Partial modules', (string) ($summary['partial_modules'] ?? 0)],
+                ['Blocked modules', (string) ($summary['blocked_modules'] ?? 0)],
+                ['Inconclusive modules', (string) ($summary['inconclusive_modules'] ?? 0)],
+                ['Broken modules', (string) ($summary['broken_modules'] ?? 0)],
                 ['Successful targets', (string) $summary['successful_targets']],
                 ['Failed targets', (string) $summary['failed_targets']],
             ],
@@ -592,12 +562,13 @@ Artisan::command(
                 (string) ($module['documented_capability_level'] ?? ''),
                 (string) ($module['current_validated_level'] ?? ''),
                 (string) ($module['proposed_validated_level'] ?? ''),
+                (string) ($module['validation_status'] ?? ''),
                 implode(', ', $module['successful_targets'] ?? []),
             ],
             $report['modules']
         );
         if ($rows !== []) {
-            $this->table(['Module', 'Documented', 'Current Validated', 'Proposed', 'Successful Targets'], $rows);
+            $this->table(['Module', 'Documented', 'Current Validated', 'Proposed', 'Status', 'Successful Targets'], $rows);
         }
 
         if ((bool) $this->option('json')) {

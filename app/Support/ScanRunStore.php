@@ -88,29 +88,7 @@ final class ScanRunStore
                 return;
             }
 
-            DB::table('scan_run_results')->insert([
-                'scan_run_id' => $runId,
-                'target' => (string) ($result['target'] ?? ''),
-                'category' => strtolower((string) ($result['category'] ?? '')),
-                'site_name' => (string) ($result['site_name'] ?? ''),
-                'url' => (string) ($result['url'] ?? ''),
-                'status' => (string) ($result['status'] ?? ''),
-                'reason' => (string) ($result['reason'] ?? ''),
-                'extra' => (string) ($result['extra'] ?? ''),
-                'mode' => (string) ($result['mode'] ?? ''),
-                'key' => (string) ($result['key'] ?? ''),
-                'platform' => (string) ($result['platform'] ?? ($result['key'] ?? '')),
-                'normalized_status' => (string) ($result['normalized_status'] ?? ''),
-                'profile_url' => $this->nullableString($result['profile_url'] ?? null),
-                'confidence' => $this->nullableFloat($result['confidence'] ?? null),
-                'metadata' => $this->encodeJson($result['metadata'] ?? []),
-                'external_links' => $this->encodeJson($result['external_links'] ?? []),
-                'error' => $this->nullableString($result['error'] ?? null),
-                'target_index' => $targetIndex,
-                'validator_index' => $validatorIndex,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            $this->insertResultRow($runId, $result, $targetIndex, $validatorIndex);
 
             $processed = (int) $run->processed + 1;
             $completed = (int) $run->completed_jobs + 1;
@@ -158,29 +136,7 @@ final class ScanRunStore
                 ->exists();
 
             if (!$existing) {
-                DB::table('scan_run_results')->insert([
-                    'scan_run_id' => $runId,
-                    'target' => (string) ($result['target'] ?? ''),
-                    'category' => strtolower((string) ($result['category'] ?? '')),
-                    'site_name' => (string) ($result['site_name'] ?? ''),
-                    'url' => (string) ($result['url'] ?? ''),
-                    'status' => (string) ($result['status'] ?? ''),
-                    'reason' => (string) ($result['reason'] ?? ''),
-                    'extra' => (string) ($result['extra'] ?? ''),
-                    'mode' => (string) ($result['mode'] ?? ''),
-                    'key' => (string) ($result['key'] ?? ''),
-                    'platform' => (string) ($result['platform'] ?? ($result['key'] ?? '')),
-                    'normalized_status' => (string) ($result['normalized_status'] ?? ''),
-                    'profile_url' => $this->nullableString($result['profile_url'] ?? null),
-                    'confidence' => $this->nullableFloat($result['confidence'] ?? null),
-                    'metadata' => $this->encodeJson($result['metadata'] ?? []),
-                    'external_links' => $this->encodeJson($result['external_links'] ?? []),
-                    'error' => $this->nullableString($result['error'] ?? null),
-                    'target_index' => $targetIndex,
-                    'validator_index' => $validatorIndex,
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                $this->insertResultRow($runId, $result, $targetIndex, $validatorIndex);
             }
 
             $processed = (int) $run->processed + ($existing ? 0 : 1);
@@ -253,6 +209,47 @@ final class ScanRunStore
         }
 
         return array_map(fn ($row): array => $this->normalizeStoredRow($row), $query->get()->all());
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     */
+    private function insertResultRow(string $runId, array $result, int $targetIndex, int $validatorIndex): void
+    {
+        DB::table('scan_run_results')->insert([
+            'scan_run_id' => $runId,
+            ...$this->resultRowPayload($result, $targetIndex, $validatorIndex),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $result
+     * @return array<string, mixed>
+     */
+    private function resultRowPayload(array $result, int $targetIndex, int $validatorIndex): array
+    {
+        return [
+            'target' => (string) ($result['target'] ?? ''),
+            'category' => strtolower((string) ($result['category'] ?? '')),
+            'site_name' => (string) ($result['site_name'] ?? ''),
+            'url' => (string) ($result['url'] ?? ''),
+            'status' => (string) ($result['status'] ?? ''),
+            'reason' => (string) ($result['reason'] ?? ''),
+            'extra' => (string) ($result['extra'] ?? ''),
+            'mode' => (string) ($result['mode'] ?? ''),
+            'key' => (string) ($result['key'] ?? ''),
+            'platform' => (string) ($result['platform'] ?? ($result['key'] ?? '')),
+            'normalized_status' => (string) ($result['normalized_status'] ?? ''),
+            'profile_url' => $this->nullableString($result['profile_url'] ?? null),
+            'confidence' => $this->nullableFloat($result['confidence'] ?? null),
+            'metadata' => $this->encodeJson($result['metadata'] ?? []),
+            'external_links' => $this->encodeJson($result['external_links'] ?? []),
+            'error' => $this->nullableString($result['error'] ?? null),
+            'target_index' => $targetIndex,
+            'validator_index' => $validatorIndex,
+        ];
     }
 
     /**

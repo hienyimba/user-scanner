@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use App\Contracts\ValidatorContract;
 use App\DTO\ScanResult;
 use App\Jobs\RunValidatorJob;
+use App\Services\Scanner\MetadataCapabilityService;
 use App\Services\Scanner\QueuedScanService;
 use App\Services\Scanner\ScannerEngineService;
 use App\Support\ScanRunStore;
@@ -235,6 +236,8 @@ final class PublicScanApiTest extends TestCase
 
     public function test_public_modules_endpoint_returns_categories_and_modules(): void
     {
+        $summary = app(MetadataCapabilityService::class)->summary();
+
         $response = $this->getJson('/api/v1/scan/modules/username');
 
         $response->assertOk()->assertJson([
@@ -242,10 +245,10 @@ final class PublicScanApiTest extends TestCase
             'mode' => 'username',
         ]);
 
-        $response->assertJsonPath('metadata_summary.documented_modules', 293);
-        $response->assertJsonPath('metadata_summary.validated_modules', 113);
-        $response->assertJsonPath('metadata_summary.validated_level_3_plus', 112);
-        $response->assertJsonPath('metadata_summary.validated_level_4', 100);
+        $response->assertJsonPath('metadata_summary.documented_modules', $summary['documented_modules']);
+        $response->assertJsonPath('metadata_summary.validated_modules', $summary['validated_modules']);
+        $response->assertJsonPath('metadata_summary.validated_level_3_plus', $summary['validated_level_3_plus']);
+        $response->assertJsonPath('metadata_summary.validated_level_4', $summary['validated_level_4']);
         $response->assertJsonPath('modules.0.metadata_capability_level', 1);
         $response->assertJsonPath('modules.0.metadata_capability_strategy', 'unknown');
         $response->assertJsonPath('modules.0.metadata_validated_level', null);

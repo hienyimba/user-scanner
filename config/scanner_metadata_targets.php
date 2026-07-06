@@ -1,6 +1,47 @@
 <?php
 
-return [
+$emailModuleTargetOverrides = json_decode((string) env('SCANNER_EMAIL_BASELINE_MODULE_TARGETS', '{}'), true);
+if (!is_array($emailModuleTargetOverrides)) {
+    $emailModuleTargetOverrides = [];
+}
+
+$normalizedEmailModuleTargetOverrides = [];
+foreach ($emailModuleTargetOverrides as $module => $targets) {
+    if (!is_string($module)) {
+        continue;
+    }
+
+    $module = trim($module);
+    if ($module === '') {
+        continue;
+    }
+
+    if (is_string($targets)) {
+        $targets = [$targets];
+    }
+
+    if (!is_array($targets)) {
+        continue;
+    }
+
+    $normalizedTargets = [];
+    foreach ($targets as $target) {
+        if (!is_string($target)) {
+            continue;
+        }
+
+        $target = trim($target);
+        if ($target !== '') {
+            $normalizedTargets[] = $target;
+        }
+    }
+
+    if ($normalizedTargets !== []) {
+        $normalizedEmailModuleTargetOverrides[strtolower($module)] = array_values(array_unique($normalizedTargets));
+    }
+}
+
+$registry = [
     'username' => [
         '35photo' => ['35photo'],
         'about_me' => ['aboutme'],
@@ -106,6 +147,7 @@ return [
         'substack' => ['lennysnewsletter'],
         'telegram' => ['durov'],
         'trello' => ['trello'],
+        'venmo' => ['eodioko'],
         'vivino' => ['vivino'],
         'vimeo' => ['staff'],
         'warpcast' => ['dwr'],
@@ -115,14 +157,26 @@ return [
         'youtube' => ['openai'],
     ],
     'email' => [
-        'adobe' => ['hienyimba@gmail.com', 'kaifcodec@gmail.com'],
-        'allen' => ['hienyimba@gmail.com'],
-        'coursera' => ['hienyimba@gmail.com', 'andrew.brumbelow@gmail.com'],
-        'etsy' => ['andrew.brumbelow@gmail.com', 'hienyimba@gmail.com'],
-        'indiatimes' => ['hienyimba@gmail.com', 'kaifcodec@gmail.com'],
-        'vedantu' => ['hienyimba@gmail.com'],
-        'vivino' => ['hienyimba@gmail.com'],
-        'walmart' => ['hienyimba@gmail.com', 'kaifcodec@gmail.com'],
-        'wix' => ['hienyimba@gmail.com', 'kaifcodec@gmail.com'],
+        'adobe' => ['baseline_email_primary', 'baseline_email_secondary', 'baseline_email_tertiary'],
+        'allen' => ['baseline_email_primary'],
+        'appletv' => ['baseline_email_tertiary'],
+        'coursera' => ['baseline_email_primary', 'baseline_email_tertiary'],
+        'duolingo' => ['baseline_email_tertiary'],
+        'etsy' => ['baseline_email_tertiary', 'baseline_email_primary'],
+        'eventbrite' => ['baseline_email_primary', 'baseline_email_tertiary'],
+        'github' => ['baseline_email_primary', 'baseline_email_tertiary'],
+        'gravatar' => ['baseline_email_tertiary'],
+        'indiatimes' => ['baseline_email_primary', 'baseline_email_secondary'],
+        'vedantu' => ['baseline_email_primary'],
+        'vivino' => ['baseline_email_primary'],
+        'walmart' => ['baseline_email_primary', 'baseline_email_secondary', 'baseline_email_tertiary'],
+        'wix' => ['baseline_email_primary', 'baseline_email_secondary'],
     ],
 ];
+
+foreach ($normalizedEmailModuleTargetOverrides as $module => $targets) {
+    $existingTargets = $registry['email'][$module] ?? [];
+    $registry['email'][$module] = array_values(array_unique(array_merge($existingTargets, $targets)));
+}
+
+return $registry;

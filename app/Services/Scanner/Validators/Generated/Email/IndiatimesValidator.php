@@ -38,6 +38,8 @@ final class IndiatimesValidator extends BaseGeneratedValidator
 
     public function check(string $target, array $options = []): ScanResult
     {
+        $startedAt = microtime(true);
+
         try {
             $request = Http::timeout(5)->withOptions([
                 'verify' => (bool) config('scanner.verify_ssl', false),
@@ -58,33 +60,103 @@ final class IndiatimesValidator extends BaseGeneratedValidator
 
             $response = $request->withBody(json_encode(['identifier' => $target], JSON_THROW_ON_ERROR), 'application/json')
                 ->post('https://jsso.indiatimes.com/sso/crossapp/identity/web/checkUserExists');
+            if ($blocked = $this->detectBlockedOrChallenged($response)) {
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    $blocked[0],
+                    $blocked[1],
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+                );
+            }
 
             $userStatus = (string) $response->json('data.status');
             if ($userStatus === 'VERIFIED_EMAIL') {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key(), metadata: [
-                    'public_email' => $target,
-                    'email_verification_status' => 'verified',
-                    'sources' => ['api_json'],
-                ]);
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Registered',
+                    '',
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    confidence: 0.88,
+                    metadata: $this->mergeRequestDiagnostics([
+                        'public_email' => $target,
+                        'account_exists' => true,
+                        'email_verification_status' => 'verified',
+                        'is_verified' => true,
+                        'sources' => ['api_json', 'identity_api'],
+                    ], $options, $response, $startedAt),
+                );
             }
             if ($userStatus === 'UNREGISTERED_EMAIL') {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Not Registered',
+                    '',
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+                );
             }
             if ($userStatus === 'UNVERIFIED_EMAIL') {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', 'However email is not verified on the site', mode: $this->mode(), key: $this->key(), metadata: [
-                    'public_email' => $target,
-                    'email_verification_status' => 'unverified',
-                    'sources' => ['api_json'],
-                ]);
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Registered',
+                    '',
+                    'However email is not verified on the site',
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    confidence: 0.84,
+                    metadata: $this->mergeRequestDiagnostics([
+                        'public_email' => $target,
+                        'account_exists' => true,
+                        'email_verification_status' => 'unverified',
+                        'is_verified' => false,
+                        'sources' => ['api_json', 'identity_api'],
+                    ], $options, $response, $startedAt),
+                );
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected response body, report it on github', mode: $this->mode(), key: $this->key());
+            return new ScanResult(
+                $target,
+                $this->category(),
+                $this->siteName(),
+                $this->siteUrl(),
+                'Error',
+                'Unexpected response body, report it on github',
+                mode: $this->mode(),
+                key: $this->key(),
+                metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
+            );
         } catch (\Throwable $e) {
             $message = strtolower($e->getMessage());
             $reason = str_contains($message, 'timed out')
                 ? (str_contains($message, 'read') ? 'Server took too long to respond (Read Timeout)' : 'Connection timed out! maybe region blocks')
                 : $e->getMessage();
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $reason, mode: $this->mode(), key: $this->key());
+            return new ScanResult(
+                $target,
+                $this->category(),
+                $this->siteName(),
+                $this->siteUrl(),
+                'Error',
+                $reason,
+                mode: $this->mode(),
+                key: $this->key(),
+                metadata: $this->requestDiagnostics($options, null, $startedAt),
+            );
         }
     }
 

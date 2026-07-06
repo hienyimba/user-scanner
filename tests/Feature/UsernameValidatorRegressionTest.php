@@ -41,7 +41,7 @@ use App\Services\Scanner\Validators\Generated\User\TumblrValidator;
 use App\Services\Scanner\Validators\Generated\User\WikipediaValidator;
 use App\Services\Scanner\ScannerEngineService;
 use App\Services\Scanner\Validators\Generated\User\HackernewsValidator;
-use App\Services\Scanner\Validators\User\GithubValidator;
+use App\Services\Scanner\Validators\Generated\Manual\User\GithubValidator;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;

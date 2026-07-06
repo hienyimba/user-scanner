@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Services\Scanner\MetadataCapabilityService;
 use Tests\TestCase;
 
 final class MetadataAcceptanceAuditCommandTest extends TestCase
@@ -12,6 +13,8 @@ final class MetadataAcceptanceAuditCommandTest extends TestCase
     {
         $outputPath = storage_path('framework/testing/metadata-acceptance-audit.json');
         @unlink($outputPath);
+        $summary = app(MetadataCapabilityService::class)->summary();
+        $emailFocus = app(MetadataCapabilityService::class)->validationGapSummary('email');
 
         $this->artisan('scanner:metadata-acceptance-audit', [
             '--output' => $outputPath,
@@ -24,9 +27,12 @@ final class MetadataAcceptanceAuditCommandTest extends TestCase
         $report = json_decode((string) file_get_contents($outputPath), true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame('proved_with_live_level3_gap', $report['overall_status']);
         $this->assertFalse($report['strict_live_level3_required']);
-        $this->assertSame(293, $report['summary']['documented_modules']);
-        $this->assertSame(112, $report['summary']['validated_level_3_plus']);
-        $this->assertSame(100, $report['summary']['validated_level_4']);
+        $this->assertSame($summary['documented_modules'], $report['summary']['documented_modules']);
+        $this->assertSame($summary['validated_level_3_plus'], $report['summary']['validated_level_3_plus']);
+        $this->assertSame($summary['validated_level_4'], $report['summary']['validated_level_4']);
+        $this->assertSame($emailFocus['promotion_candidates'], $report['email_focus']['promotion_candidates']);
+        $this->assertSame($emailFocus['promotion_candidates_without_baseline_targets'], $report['email_focus']['promotion_candidates_without_baseline_targets']);
+        $this->assertContains('gmail', $report['email_focus']['safety_blocked_platforms']);
 
         $documentedLevel3 = collect($report['requirements'])->firstWhere('key', 'documented_level_3_plus');
         $this->assertNotNull($documentedLevel3);

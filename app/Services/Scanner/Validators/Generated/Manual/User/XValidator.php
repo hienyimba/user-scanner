@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace App\Services\Scanner\Validators\User;
+namespace App\Services\Scanner\Validators\Generated\Manual\User;
 
 use App\Contracts\ValidatorContract;
 use App\DTO\ScanResult;

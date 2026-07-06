@@ -9,6 +9,7 @@ final class MetadataRevalidationService
     public function __construct(
         private readonly MetadataAuditService $metadataAudit,
         private readonly MetadataCapabilityService $metadataCapability,
+        private readonly MetadataTargetResolver $targetResolver,
     ) {
     }
 
@@ -41,11 +42,15 @@ final class MetadataRevalidationService
                 continue;
             }
 
-            $audit = $this->metadataAudit->audit($mode, $targets, null, [$capability['platform']], $options);
-            $moduleReports[] = $this->summarizeModuleAudit($capability, $audit);
+            $resolvedTargets = $this->targetResolver->resolveMany($mode, $targets);
+            $audit = $resolvedTargets['resolved'] === []
+                ? MetadataBaselineValidationService::emptyAudit($mode)
+                : $this->metadataAudit->audit($mode, $resolvedTargets['resolved'], null, [$capability['platform']], $options);
+            $audit = MetadataBaselineValidationService::aliasAuditTargets($audit, $resolvedTargets['labels_by_resolved'] ?? []);
+            $moduleReports[] = $this->summarizeModuleAudit($capability, $audit, $resolvedTargets['unresolved']);
         }
 
-        usort($moduleReports, static fn (array $a, array $b): int => [$a['category'], $a['module']] <=> [$b['category'], $b['module']]);
+        $moduleReports = MetadataBaselineValidationService::sortModuleReports($moduleReports);
 
         return [
             'generated_at' => now()->toIso8601String(),
@@ -64,44 +69,13 @@ final class MetadataRevalidationService
      * @param array<string, mixed> $audit
      * @return array<string, mixed>
      */
-    private function summarizeModuleAudit(array $capability, array $audit): array
+    private function summarizeModuleAudit(array $capability, array $audit, array $unresolvedTargets = []): array
     {
-        $results = is_array($audit['results'] ?? null) ? $audit['results'] : [];
-        $foundResults = array_values(array_filter(
-            $results,
-            static fn (array $result): bool => ($result['normalized_status'] ?? null) === 'found'
-        ));
-        $successfulTargets = array_values(array_unique(array_map(
-            static fn (array $result): string => (string) $result['target'],
-            $foundResults
-        )));
-        $failedTargets = array_values(array_unique(array_map(
-            static fn (array $result): string => (string) $result['target'],
-            array_filter(
-                $results,
-                static fn (array $result): bool => ($result['normalized_status'] ?? null) !== 'found'
-            )
-        )));
-        $failedResults = array_values(array_filter(
-            $results,
-            static fn (array $result): bool => ($result['normalized_status'] ?? null) !== 'found'
-        ));
-
-        $observedLevels = array_map(
-            static fn (array $result): int => (int) ($result['observed_metadata_level'] ?? 0),
-            $foundResults
-        );
-        $revalidatedLevel = $observedLevels === [] ? null : min($observedLevels);
+        $snapshot = MetadataBaselineValidationService::auditSnapshot($audit, $unresolvedTargets);
+        $revalidatedLevel = $snapshot['observed_levels'] === [] ? null : min($snapshot['observed_levels']);
         $currentValidatedLevel = is_numeric($capability['validated_level'] ?? null)
             ? (int) $capability['validated_level']
             : null;
-
-        $statusBreakdown = [];
-        foreach ($results as $result) {
-            $status = (string) ($result['normalized_status'] ?? 'unknown');
-            $statusBreakdown[$status] = ($statusBreakdown[$status] ?? 0) + 1;
-        }
-        ksort($statusBreakdown);
 
         return [
             'module' => (string) $capability['platform'],
@@ -111,12 +85,12 @@ final class MetadataRevalidationService
             'current_validated_at' => $capability['validated_at'] ?? null,
             'validated_targets' => array_values(array_map('strval', $capability['validated_targets'] ?? [])),
             'revalidated_level' => $revalidatedLevel,
-            'revalidation_status' => $this->determineRevalidationStatus($currentValidatedLevel, $revalidatedLevel, $successfulTargets, $failedTargets, $failedResults),
-            'successful_targets' => $successfulTargets,
-            'failed_targets' => $failedTargets,
-            'status_breakdown' => $statusBreakdown,
+            'revalidation_status' => $this->determineRevalidationStatus($currentValidatedLevel, $revalidatedLevel, $snapshot['successful_targets'], $snapshot['failed_targets'], $snapshot['failed_results']),
+            'successful_targets' => $snapshot['successful_targets'],
+            'failed_targets' => $snapshot['failed_targets'],
+            'status_breakdown' => $snapshot['status_breakdown'],
             'audit_summary' => $audit['summary'] ?? [],
-            'results' => $results,
+            'results' => $snapshot['results'],
         ];
     }
 
@@ -135,14 +109,7 @@ final class MetadataRevalidationService
         array $failedResults,
     ): string {
         if ($successfulTargets === []) {
-            if ($this->isInconclusiveFailureSet($failedResults)) {
-                return 'inconclusive';
-            }
-            if ($this->isBlockedFailureSet($failedResults)) {
-                return 'blocked';
-            }
-
-            return 'broken';
+            return MetadataBaselineValidationService::classifyFailureSet($failedResults);
         }
 
         if ($currentValidatedLevel !== null && $revalidatedLevel !== null && $revalidatedLevel < $currentValidatedLevel) {
@@ -154,52 +121,6 @@ final class MetadataRevalidationService
         }
 
         return 'stable';
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $failedResults
-     */
-    private function isInconclusiveFailureSet(array $failedResults): bool
-    {
-        if ($failedResults === []) {
-            return false;
-        }
-
-        foreach ($failedResults as $result) {
-            if (($result['normalized_status'] ?? null) !== 'error') {
-                return false;
-            }
-
-            $statusDetail = (string) ($result['status_detail'] ?? '');
-            if (!in_array($statusDetail, ['network_error', 'tls_blocked'], true)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    /**
-     * @param array<int, array<string, mixed>> $failedResults
-     */
-    private function isBlockedFailureSet(array $failedResults): bool
-    {
-        if ($failedResults === []) {
-            return false;
-        }
-
-        foreach ($failedResults as $result) {
-            if (($result['normalized_status'] ?? null) !== 'error') {
-                return false;
-            }
-
-            $statusDetail = (string) ($result['status_detail'] ?? '');
-            if (!in_array($statusDetail, ['anti_bot', 'blocked', 'rate_limited'], true)) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     /**

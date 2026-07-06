@@ -273,4 +273,62 @@ final class ProfileMetadataExtractorTest extends TestCase
         $this->assertSame('user', $metadata['account_type']);
         $this->assertContains('html_hydration', $metadata['sources']);
     }
+
+    public function test_extract_profile_html_metadata_collects_rich_public_pivot_hydration_fields(): void
+    {
+        $extractor = app(ProfileMetadataExtractor::class);
+        $metadata = $extractor->extractProfileHtmlMetadata(
+            <<<'HTML'
+            <html>
+            <head>
+                <script id="__NEXT_DATA__" type="application/json">
+                    {
+                        "props": {
+                            "pageProps": {
+                                "profile": {
+                                    "userId": 4242,
+                                    "username": "kaifcodec",
+                                    "displayName": "Kaif Codec",
+                                    "gender": "male",
+                                    "isPrivate": true,
+                                    "isPremium": true,
+                                    "showProBadge": true,
+                                    "verified_type": "official",
+                                    "jid": "kaifcodec@smule.example",
+                                    "friends_count": 88,
+                                    "tips_count": 12,
+                                    "playlist_count": 6,
+                                    "stations_count": 4,
+                                    "countries": ["Nigeria", "Ghana"],
+                                    "social_links": ["https://x.example/kaifcodec"],
+                                    "__typename": "UserProfile"
+                                }
+                            }
+                        }
+                    }
+                </script>
+            </head>
+            <body></body>
+            </html>
+            HTML,
+            'https://profiles.test/users/kaifcodec',
+        );
+
+        $this->assertSame('kaifcodec', $metadata['username']);
+        $this->assertSame(4242, $metadata['user_id']);
+        $this->assertSame('Kaif Codec', $metadata['display_name']);
+        $this->assertSame('male', $metadata['gender']);
+        $this->assertSame('official', $metadata['verified_type']);
+        $this->assertSame('kaifcodec@smule.example', $metadata['jid']);
+        $this->assertTrue($metadata['is_private']);
+        $this->assertTrue($metadata['is_premium']);
+        $this->assertTrue($metadata['show_pro_badge']);
+        $this->assertSame(88, $metadata['friends']);
+        $this->assertSame(12, $metadata['tips']);
+        $this->assertSame(6, $metadata['playlist_count']);
+        $this->assertSame(4, $metadata['stations']);
+        $this->assertSame(['Nigeria', 'Ghana'], $metadata['countries']);
+        $this->assertContains('https://x.example/kaifcodec', $metadata['external_links']);
+        $this->assertContains('html_hydration', $metadata['sources']);
+    }
 }

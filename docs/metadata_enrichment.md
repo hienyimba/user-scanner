@@ -9,8 +9,9 @@ For a requirement-by-requirement evidence map, see `docs/metadata_acceptance_aud
 - Python inventory source: `user-scanner-py-june-release/user_scanner`
 - Inventory scope: active modules under `user_scan/` and `email_scan/`
 - Explicitly excluded: any module under `abandoned/`
+- Laravel capability overrides: `config/scanner_metadata_capability_overrides.php` augments the June inventory for private Laravel-only modules and for email modules whose metadata capability now exceeds the original June Python implementation.
 
-`App\Services\Scanner\MetadataCapabilityService` reads that June inventory directly and classifies each active module into a documented capability level.
+`App\Services\Scanner\MetadataCapabilityService` reads the June inventory and then applies Laravel capability overrides so documented capability can reflect the current production email layer instead of only the original Python source.
 
 Important distinction:
 
@@ -156,6 +157,8 @@ php artisan scanner:metadata-validate-baselines username --module=github --json
 Supporting config:
 
 - Validation targets: `config/scanner_metadata_targets.php`
+- Private email baseline alias resolution: `config/scanner_private_targets.php` via `SCANNER_EMAIL_BASELINE_*` env vars or `SCANNER_EMAIL_BASELINE_TARGET_ALIASES`
+- Module-specific private email baseline extensions: `SCANNER_EMAIL_BASELINE_MODULE_TARGETS` JSON, merged into `config/scanner_metadata_targets.php` without committing private addresses
 - Validation overlay: `config/scanner_metadata_validations.php`
 
 The exported validation level is the minimum observed level across successful targets for a module.

@@ -6,6 +6,7 @@ namespace App\Services\Scanner\Validators\Generated\Email;
 
 use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
+use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 
@@ -38,10 +39,12 @@ final class WalmartValidator extends BaseGeneratedValidator
 
     public function check(string $target, array $options = []): ScanResult
     {
+        $startedAt = microtime(true);
         $uid = str_replace('-', '', (string) Str::uuid());
         $traceId = '00-' . substr($uid, 0, 32) . '-' . substr($uid, 0, 16) . '-00';
         $corrId = rtrim(strtr(base64_encode(random_bytes(18)), '+/', '-_'), '=');
         $challenge = $this->generatePkceChallenge();
+        $cookieJar = new CookieJar();
 
         $payload = [
             'query' => 'query GetLoginOptions($input:UserOptionsInput!){getLoginOptions(input:$input){loginOptions{...LoginOptionsFragment}canUseEmailOTP phoneCollectionRequired authCode errors{...LoginOptionsErrorFragment}}}fragment LoginOptionsFragment on LoginOptions{loginId loginIdType emailId phoneNumber{number countryCode isoCountryCode}canUsePassword canUsePhoneOTP canUseEmailOTP loginPhoneLastFour maskedPhoneNumberDetails{loginPhoneLastFour countryCode isoCountryCode}loginMaskedEmailId signInPreference loginPreference lastLoginPreference hasRemainingFactors isPhoneConnected otherAccountsWithPhone loginMaskedEmailId hasPasskeyOnProfile accountDomain residencyRegion{residencyCountryCode residencyRegionCode}isIdentityMergeRequired}fragment LoginOptionsErrorFragment on IdentityLoginOptionsError{code message version}',
@@ -65,6 +68,8 @@ final class WalmartValidator extends BaseGeneratedValidator
 
         try {
             $request = Http::timeout(10)->withOptions([
+                'allow_redirects' => true,
+                'cookies' => $cookieJar,
                 'verify' => (bool) config('scanner.verify_ssl', false),
             ])->withHeaders([
                 'User-Agent' => 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Mobile Safari/537.36',
@@ -105,17 +110,32 @@ final class WalmartValidator extends BaseGeneratedValidator
                 $request = $request->withOptions(['proxy' => $options['proxy']]);
             }
 
+            $bootstrap = $request->get($loginPage);
+            if ($blocked = $this->detectBlockedOrChallenged($bootstrap)) {
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    $blocked[0],
+                    $blocked[1],
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    metadata: $this->mergeRequestDiagnostics([], $options, $bootstrap, $startedAt),
+                );
+            }
+
             $response = $request->withBody(json_encode($payload, JSON_THROW_ON_ERROR), 'application/json')
                 ->post('https://identity.walmart.com/orchestra/idp/graphql');
 
             if ($response->status() === 429) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Rate limited', mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Rate limited', mode: $this->mode(), key: $this->key(), metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt));
             }
             if ($response->status() === 412) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Precondition Failed (412) - Walmart detected session mismatch', mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Precondition Failed (412) - Walmart detected session mismatch', mode: $this->mode(), key: $this->key(), metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt));
             }
             if ($response->status() !== 200) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'HTTP Error: ' . $response->status(), mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'HTTP Error: ' . $response->status(), mode: $this->mode(), key: $this->key(), metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt));
             }
 
             $loginOptions = $response->json('data.getLoginOptions.loginOptions') ?? [];
@@ -160,21 +180,21 @@ final class WalmartValidator extends BaseGeneratedValidator
                     if (($error['code'] ?? null) === 'COMPROMISED') {
                         $metadata['account_status'] = 'compromised';
 
-                        return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', 'Account flagged as compromised', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
+                        return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', 'Account flagged as compromised', $extra, mode: $this->mode(), key: $this->key(), metadata: $this->mergeRequestDiagnostics($metadata, $options, $response, $startedAt));
                     }
                 }
 
                 $metadata['account_status'] = 'active';
 
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $metadata);
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', $extra, mode: $this->mode(), key: $this->key(), metadata: $this->mergeRequestDiagnostics($metadata, $options, $response, $startedAt));
             }
             if ($pref === 'CREATE') {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key(), metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt));
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected response structure', mode: $this->mode(), key: $this->key());
+            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected response structure', mode: $this->mode(), key: $this->key(), metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt));
         } catch (\Throwable $e) {
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $e->getMessage(), mode: $this->mode(), key: $this->key());
+            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $e->getMessage(), mode: $this->mode(), key: $this->key(), metadata: $this->requestDiagnostics($options, null, $startedAt));
         }
     }
 

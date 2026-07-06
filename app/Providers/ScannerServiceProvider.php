@@ -28,11 +28,25 @@ final class ScannerServiceProvider extends ServiceProvider
         $this->app->singleton(MetadataBaselineValidationService::class);
 
         $this->app->singleton('scanner.validators', function ($app): array {
-            $manual = config('scanner.validators', []);
-            $generated = config('scanner_generated.validators', []);
-            $classes = array_values(array_unique(array_merge($manual, $generated)));
+            $validators = [];
 
-            return array_map(static fn (string $class): ValidatorContract => $app->make($class), $classes);
+            foreach (config('scanner.validators', []) as $class) {
+                /** @var ValidatorContract $validator */
+                $validator = $app->make($class);
+                $validators[$validator->mode() . ':' . $validator->key()] = $validator;
+            }
+
+            foreach (config('scanner_generated.validators', []) as $class) {
+                /** @var ValidatorContract $validator */
+                $validator = $app->make($class);
+                $registryKey = $validator->mode() . ':' . $validator->key();
+
+                if (!isset($validators[$registryKey])) {
+                    $validators[$registryKey] = $validator;
+                }
+            }
+
+            return array_values($validators);
         });
 
         $this->app->singleton(ScannerEngineService::class, function ($app): ScannerEngineService {

@@ -353,13 +353,17 @@ final class ScanResult
 
     private static function resolveProfileUrlForOutput(?string $profileUrl, string $url, string $normalizedStatus, string $mode, string $target): ?string
     {
-        if ($normalizedStatus !== 'found' || $mode !== 'username') {
+        if ($normalizedStatus !== 'found') {
             return null;
         }
 
         $explicitProfileUrl = self::sanitizePublicProfileUrl($profileUrl, false, $target);
         if ($explicitProfileUrl !== null) {
             return $explicitProfileUrl;
+        }
+
+        if ($mode !== 'username') {
+            return null;
         }
 
         if (trim($url) === '') {
@@ -573,6 +577,9 @@ final class ScanResult
                 'status_detail',
                 'observed_metadata_level',
                 'platform',
+                'http_status',
+                'latency_ms',
+                'proxy_used',
             ], true)) {
                 continue;
             }

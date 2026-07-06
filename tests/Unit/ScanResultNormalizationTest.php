@@ -157,6 +157,27 @@ final class ScanResultNormalizationTest extends TestCase
         $this->assertSame(0.74, $result['confidence']);
     }
 
+    public function test_to_array_preserves_explicit_email_profile_url_when_public_evidence_exists(): void
+    {
+        $result = ScanResult::fromArray([
+            'target' => 'alice@example.com',
+            'category' => 'social',
+            'site_name' => 'Gravatar',
+            'url' => 'https://gravatar.com',
+            'status' => 'Registered',
+            'mode' => 'email',
+            'key' => 'gravatar',
+            'profile_url' => 'https://gravatar.com/alice',
+            'metadata' => [
+                'display_name' => 'Alice Example',
+                'sources' => ['gravatar_profile'],
+            ],
+        ])->toArray();
+
+        $this->assertSame('https://gravatar.com/alice', $result['profile_url']);
+        $this->assertContains('profile_url', $result['normalized']['evidence']);
+    }
+
     public function test_to_array_normalizes_minimal_not_found_result_without_enrichment(): void
     {
         $result = ScanResult::fromArray([

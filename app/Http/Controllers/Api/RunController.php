@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\RunBatchRequest;
 use App\Services\Scanner\QueuedScanService;
+use App\Support\ScanRunPresenter;
 use App\Support\ScanRunStore;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,25 +15,9 @@ use RuntimeException;
 
 final class RunController extends Controller
 {
-    public function create(Request $request, QueuedScanService $queuedRuns): JsonResponse
+    public function create(RunBatchRequest $request, QueuedScanService $queuedRuns): JsonResponse
     {
-        $data = $request->validate([
-            'mode' => ['required', 'in:username,email'],
-            'targets' => ['required', 'array', 'min:1'],
-            'targets.*' => ['required', 'string', 'max:255'],
-            'category' => ['nullable', 'string', 'max:64'],
-            'module_keys' => ['nullable', 'array'],
-            'module_keys.*' => ['string', 'max:100'],
-            'use_proxy' => ['nullable', 'boolean'],
-            'validate_proxies' => ['nullable', 'boolean'],
-            'allow_loud' => ['nullable', 'boolean'],
-            'no_nsfw' => ['nullable', 'boolean'],
-            'only_found' => ['nullable', 'boolean'],
-            'verbose' => ['nullable', 'boolean'],
-            'delay' => ['nullable', 'numeric', 'min:0', 'max:10'],
-            'stop' => ['nullable', 'integer', 'min:1', 'max:1000'],
-            'proxy_list' => ['nullable', 'string', 'max:20000'],
-        ]);
+        $data = $request->validated();
 
         try {
             $run = $queuedRuns->startRun(
@@ -48,7 +34,7 @@ final class RunController extends Controller
         return response()->json(['ok' => true, 'run_id' => $run['run_id']], 202);
     }
 
-    public function show(string $runId, Request $request, ScanRunStore $store): JsonResponse
+    public function show(string $runId, Request $request, ScanRunStore $store, ScanRunPresenter $presenter): JsonResponse
     {
         $run = $store->getRun($runId);
         if (!$run) {
@@ -61,26 +47,7 @@ final class RunController extends Controller
 
         return response()->json([
             'ok' => true,
-            'run' => [
-                'id' => $run['id'],
-                'mode' => $run['mode'],
-                'status' => $run['status'],
-                'total' => $run['total'],
-                'processed' => $run['processed'],
-                'validator_count' => $run['validator_count'],
-                'target_count' => $run['target_count'],
-                'expected_results' => $run['expected_results'],
-                'queued_jobs' => $run['queued_jobs'],
-                'running_jobs' => $run['running_jobs'],
-                'completed_jobs' => $run['completed_jobs'],
-                'progress' => ($run['total'] ?? 0) > 0 ? round((($run['processed'] ?? 0) / $run['total']) * 100, 2) : 0,
-                'created_at' => $run['created_at'] ?? null,
-                'updated_at' => $run['updated_at'] ?? null,
-                'completed_at' => $run['completed_at'] ?? null,
-                'error' => $run['error'] ?? null,
-                'options' => $run['options'] ?? [],
-                'expanded_targets' => $run['expanded_targets'] ?? [],
-            ],
+            'run' => $presenter->adminApiRun($run),
             'results' => $filtered,
         ]);
     }
