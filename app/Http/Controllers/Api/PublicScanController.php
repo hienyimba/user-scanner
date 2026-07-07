@@ -6,6 +6,7 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\PublicScanRequest;
+use App\Services\OpsMetricsService;
 use App\Services\Scanner\MetadataCapabilityService;
 use App\Services\Scanner\QueuedScanService;
 use App\Services\Scanner\ScannerEngineService;
@@ -19,7 +20,12 @@ final class PublicScanController extends Controller
 {
     private const DEFAULT_REUSE_WINDOW_HOURS = 48;
 
-    public function create(PublicScanRequest $request, QueuedScanService $queuedRuns, ScanRunStore $store): JsonResponse
+    public function create(
+        PublicScanRequest $request,
+        QueuedScanService $queuedRuns,
+        ScanRunStore $store,
+        OpsMetricsService $metrics,
+    ): JsonResponse
     {
         $data = $request->validated();
         $options = [
@@ -39,6 +45,16 @@ final class PublicScanController extends Controller
             );
 
             if ($reusedRun !== null) {
+                $metrics->recordPublicScanRequest(
+                    mode: $data['mode'],
+                    target: $data['target'],
+                    category: $data['category'] ?? null,
+                    runId: (string) $reusedRun['id'],
+                    ok: true,
+                    reused: true,
+                    cached: $reusedRun['status'] === 'completed',
+                );
+
                 return response()->json([
                     'ok' => true,
                     'run_id' => $reusedRun['id'],
@@ -61,11 +77,32 @@ final class PublicScanController extends Controller
                 options: $options,
             );
         } catch (RuntimeException $e) {
+            $metrics->recordPublicScanRequest(
+                mode: $data['mode'],
+                target: $data['target'],
+                category: $data['category'] ?? null,
+                runId: null,
+                ok: false,
+                reused: false,
+                cached: false,
+                error: $e->getMessage(),
+            );
+
             return response()->json([
                 'ok' => false,
                 'error' => $e->getMessage(),
             ], 422);
         }
+
+        $metrics->recordPublicScanRequest(
+            mode: $data['mode'],
+            target: $data['target'],
+            category: $data['category'] ?? null,
+            runId: (string) $run['run_id'],
+            ok: true,
+            reused: false,
+            cached: false,
+        );
 
         return response()->json([
             'ok' => true,

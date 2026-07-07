@@ -49,6 +49,15 @@ final class PublicScanApiTest extends TestCase
             ]);
 
         Queue::assertPushed(RunValidatorJob::class, 2);
+
+        $this->assertDatabaseHas('public_scan_request_events', [
+            'mode' => 'username',
+            'run_id' => (string) $response->json('run_id'),
+            'ok' => 1,
+            'reused' => 0,
+            'cached' => 0,
+            'target_hash' => hash('sha256', 'alice'),
+        ]);
     }
 
     public function test_public_scan_create_maps_show_hits_use_proxy_and_store(): void
@@ -152,6 +161,15 @@ final class PublicScanApiTest extends TestCase
         ]);
 
         Queue::assertNothingPushed();
+
+        $this->assertDatabaseHas('public_scan_request_events', [
+            'mode' => 'username',
+            'run_id' => $runId,
+            'ok' => 1,
+            'reused' => 1,
+            'cached' => 1,
+            'target_hash' => hash('sha256', 'alice'),
+        ]);
     }
 
     public function test_public_scan_create_does_not_reuse_completed_run_older_than_48_hours(): void

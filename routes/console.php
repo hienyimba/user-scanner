@@ -1,5 +1,6 @@
 <?php
 
+use App\Services\OpsMetricsService;
 use App\Services\Scanner\MetadataAuditService;
 use App\Services\Scanner\MetadataBaselineValidationService;
 use App\Services\Scanner\MetadataCapabilityService;
@@ -12,6 +13,20 @@ use Symfony\Component\Console\Command\Command;
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
+
+Artisan::command('scanner:ops-snapshot', function (OpsMetricsService $metrics): int {
+    $snapshot = $metrics->captureQueueSnapshot();
+
+    $this->info(sprintf(
+        'Captured queue snapshot: queued=%d reserved=%d active_runs=%d outstanding_results=%d',
+        $snapshot['queued_jobs'],
+        $snapshot['reserved_jobs'],
+        $snapshot['active_runs'],
+        $snapshot['outstanding_results'],
+    ));
+
+    return Command::SUCCESS;
+})->purpose('Capture a DB-backed queue backlog snapshot for the ops dashboard');
 
 Artisan::command(
     'scanner:metadata-readiness
