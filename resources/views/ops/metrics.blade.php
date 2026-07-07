@@ -44,6 +44,12 @@
 @endphp
 
 <div class="max-w-7xl mx-auto px-4 py-10 space-y-8">
+    @if(session('status'))
+        <div class="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            {{ session('status') }}
+        </div>
+    @endif
+
     <section class="rounded-3xl bg-white/85 backdrop-blur border border-white/70 shadow-xl overflow-hidden">
         <div class="grid lg:grid-cols-[1.15fr_0.85fr] gap-6 p-6 md:p-8">
             <div class="space-y-4">
@@ -185,26 +191,66 @@
                 <table class="min-w-full text-sm">
                     <thead class="bg-slate-50 text-slate-700">
                     <tr>
+                        <th class="text-left px-4 py-3">Mode</th>
                         <th class="text-left px-4 py-3">Module</th>
                         <th class="text-left px-4 py-3">Errors</th>
                         <th class="text-left px-4 py-3">Total</th>
                         <th class="text-left px-4 py-3">Rate</th>
+                        <th class="text-left px-4 py-3">Skip Controls</th>
                     </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                     @forelse($validatorErrors['modules'] as $module)
                         <tr>
+                            <td class="px-4 py-3 text-xs uppercase tracking-[0.2em] text-slate-500">{{ $module['mode'] }}</td>
                             <td class="px-4 py-3">
                                 <div class="font-medium text-slate-900">{{ $module['label'] }}</div>
                                 <div class="text-xs font-mono text-slate-500">{{ $module['key'] }}</div>
+                                @if(!empty($module['skip_active']))
+                                    <div class="mt-2 inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                                        {{ $module['skip_label'] ?? 'Skipped' }}
+                                    </div>
+                                @endif
                             </td>
                             <td class="px-4 py-3 text-amber-700">{{ number_format($module['errors']) }}</td>
                             <td class="px-4 py-3 text-slate-600">{{ number_format($module['total']) }}</td>
                             <td class="px-4 py-3 font-semibold text-slate-900">{{ number_format($module['rate'], 1) }}%</td>
+                            <td class="px-4 py-3">
+                                <div class="flex flex-wrap gap-2">
+                                    <form method="POST" action="{{ route('ops.module-skips.update') }}">
+                                        @csrf
+                                        <input type="hidden" name="mode" value="{{ $module['mode'] }}">
+                                        <input type="hidden" name="module_key" value="{{ $module['key'] }}">
+                                        <input type="hidden" name="action" value="set">
+                                        <input type="hidden" name="duration" value="permanent">
+                                        <input type="hidden" name="window" value="{{ $selectedWindow }}">
+                                        <button type="submit" class="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800">Permanent</button>
+                                    </form>
+                                    <form method="POST" action="{{ route('ops.module-skips.update') }}">
+                                        @csrf
+                                        <input type="hidden" name="mode" value="{{ $module['mode'] }}">
+                                        <input type="hidden" name="module_key" value="{{ $module['key'] }}">
+                                        <input type="hidden" name="action" value="set">
+                                        <input type="hidden" name="duration" value="6h">
+                                        <input type="hidden" name="window" value="{{ $selectedWindow }}">
+                                        <button type="submit" class="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 hover:border-amber-400">6hr</button>
+                                    </form>
+                                    @if(!empty($module['skip_active']))
+                                        <form method="POST" action="{{ route('ops.module-skips.update') }}">
+                                            @csrf
+                                            <input type="hidden" name="mode" value="{{ $module['mode'] }}">
+                                            <input type="hidden" name="module_key" value="{{ $module['key'] }}">
+                                            <input type="hidden" name="action" value="clear">
+                                            <input type="hidden" name="window" value="{{ $selectedWindow }}">
+                                            <button type="submit" class="rounded-full border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-800 hover:border-emerald-400">Clear</button>
+                                        </form>
+                                    @endif
+                                </div>
+                            </td>
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="4" class="px-4 py-6 text-center text-slate-500">No validator result rows yet for this window.</td>
+                            <td colspan="6" class="px-4 py-6 text-center text-slate-500">No validator result rows yet for this window.</td>
                         </tr>
                     @endforelse
                     </tbody>

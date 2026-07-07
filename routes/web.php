@@ -1,7 +1,8 @@
 <?php
 
-use App\Http\Controllers\OpsMetricsController;
 use App\Http\Controllers\ApiTesterController;
+use App\Http\Controllers\OpsMetricsController;
+use App\Http\Controllers\OpsModuleSkipController;
 use App\Http\Controllers\ScanController;
 use Illuminate\Support\Facades\Route;
 
@@ -10,3 +11,4 @@ Route::post('/scanner', [ScanController::class, 'run'])->name('scanner.run');
 Route::get('/api-tester', [ApiTesterController::class, 'index'])->name('api-tester.index');
 Route::get('/api-tester/external', [ApiTesterController::class, 'external'])->name('api-tester.external');
 Route::get('/eda2822d-b607-4cfe-f66z-59a90/metrics', [OpsMetricsController::class, 'index'])->name('ops.metrics');
+Route::post('/eda2822d-b607-4cfe-f66z-59a90/module-skips', [OpsModuleSkipController::class, 'update'])->name('ops.module-skips.update');

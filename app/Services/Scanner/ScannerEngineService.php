@@ -17,6 +17,7 @@ final class ScannerEngineService
         private readonly PatternExpanderService $patternExpander,
         private readonly MetadataEnrichmentService $metadataEnrichment,
         private readonly MetadataCapabilityService $metadataCapability,
+        private readonly ModuleSkipService $moduleSkips,
     ) {
     }
 
@@ -80,6 +81,7 @@ final class ScannerEngineService
      */
     public function listModules(string $mode, bool $noNsfw = false): array
     {
+        $skipFlags = $this->moduleSkips->activeSkipsForMany($mode, $this->allValidatorKeysForMode($mode));
         $modules = [];
         $seen = [];
         foreach ($this->validators as $validator) {
@@ -114,6 +116,11 @@ final class ScannerEngineService
                 'metadata_validated_at' => $this->metadataCapability->forModule($mode, $validator->key())['validated_at'] ?? null,
                 'metadata_validated_targets' => $this->metadataCapability->forModule($mode, $validator->key())['validated_targets'] ?? [],
                 'metadata_validated_notes' => $this->metadataCapability->forModule($mode, $validator->key())['validated_notes'] ?? null,
+                'skip_active' => isset($skipFlags[$validator->key()]),
+                'skip_reason' => $skipFlags[$validator->key()]['reason'] ?? null,
+                'skip_expires_at' => $skipFlags[$validator->key()]['expires_at'] ?? null,
+                'skip_label' => $skipFlags[$validator->key()]['label'] ?? null,
+                'skip_duration' => $skipFlags[$validator->key()]['duration'] ?? null,
             ];
         }
 
@@ -196,6 +203,20 @@ final class ScannerEngineService
      */
     private function runValidator(ValidatorContract $validator, string $target, string $mode, array $options): ScanResult
     {
+        $skipFlag = $this->moduleSkips->activeSkipFor($mode, $validator->key());
+        if ($skipFlag !== null) {
+            return $this->metadataEnrichment->enrich(new ScanResult(
+                target: $target,
+                category: strtolower($validator->category()),
+                siteName: $validator->siteName(),
+                url: $validator->siteUrl(),
+                status: 'Skipped',
+                reason: (string) ($skipFlag['reason'] ?? 'Skipped from ops dashboard'),
+                mode: $mode,
+                key: $validator->key(),
+            ), $validator, $options);
+        }
+
         $autoSkipReason = $this->autoSkipReason($validator->key(), $mode);
         if ($autoSkipReason !== null) {
             return $this->metadataEnrichment->enrich(new ScanResult(
@@ -304,6 +325,7 @@ final class ScannerEngineService
     {
         $selected = [];
         $seen = [];
+        $skipFlags = $this->moduleSkips->activeSkipsForMany($mode, $this->allValidatorKeysForMode($mode));
 
         foreach ($this->validators as $validator) {
             if ($validator->mode() !== $mode) {
@@ -328,6 +350,10 @@ final class ScannerEngineService
                 continue;
             }
 
+            if (isset($skipFlags[$validator->key()])) {
+                continue;
+            }
+
             $selected[] = $validator;
         }
 
@@ -349,6 +375,30 @@ final class ScannerEngineService
         }
 
         return null;
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function allValidatorKeysForMode(string $mode): array
+    {
+        $keys = [];
+        $seen = [];
+
+        foreach ($this->validators as $validator) {
+            if ($validator->mode() !== $mode) {
+                continue;
+            }
+
+            if (isset($seen[$validator->key()])) {
+                continue;
+            }
+
+            $seen[$validator->key()] = true;
+            $keys[] = $validator->key();
+        }
+
+        return $keys;
     }
 
     private function isLoud(string $siteName, string $mode): bool

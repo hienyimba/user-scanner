@@ -133,7 +133,7 @@ final class OpsMetricsDashboardTest extends TestCase
             'updated_at' => now()->subMinutes(5),
         ]);
 
-        $response = $this->get('/ops/metrics');
+        $response = $this->get(route('ops.metrics'));
 
         $response->assertOk();
         $response->assertSee('Ops Dashboard');
@@ -163,11 +163,11 @@ final class OpsMetricsDashboardTest extends TestCase
             'updated_at' => now()->subHour(),
         ]);
 
-        $response = $this->get('/ops/metrics?window=6h');
+        $response = $this->get(route('ops.metrics', ['window' => '6h']));
 
         $response->assertOk();
         $response->assertSee('Hourly buckets');
-        $response->assertSee('/ops/metrics?window=30d', false);
-        $response->assertSee('/ops/metrics?window=6h', false);
+        $response->assertSee(route('ops.metrics', ['window' => '30d']), false);
+        $response->assertSee(route('ops.metrics', ['window' => '6h']), false);
     }
 }

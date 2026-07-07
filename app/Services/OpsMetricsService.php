@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services;
 
+use App\Services\Scanner\ModuleSkipService;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +17,11 @@ final class OpsMetricsService
         '1d' => ['label' => '1-day window', 'hours' => 24, 'bucket' => 'hour'],
         '6h' => ['label' => '6hrs', 'hours' => 6, 'bucket' => 'hour'],
     ];
+
+    public function __construct(
+        private readonly ModuleSkipService $moduleSkips,
+    ) {
+    }
 
     public function recordPublicScanRequest(
         string $mode,
@@ -332,7 +338,7 @@ final class OpsMetricsService
     {
         $rows = DB::table('scan_run_results')
             ->where('created_at', '>=', $startDay)
-            ->get(['key', 'site_name', 'status']);
+            ->get(['mode', 'key', 'site_name', 'status']);
 
         $modules = [];
         $totalResults = 0;
@@ -340,12 +346,15 @@ final class OpsMetricsService
 
         foreach ($rows as $row) {
             $key = trim((string) ($row->key ?? ''));
+            $mode = trim((string) ($row->mode ?? ''));
             if ($key === '') {
                 continue;
             }
 
-            if (!isset($modules[$key])) {
-                $modules[$key] = [
+            $groupKey = ($mode !== '' ? $mode : 'unknown') . ':' . $key;
+            if (!isset($modules[$groupKey])) {
+                $modules[$groupKey] = [
+                    'mode' => $mode !== '' ? $mode : 'unknown',
                     'key' => $key,
                     'label' => trim((string) ($row->site_name ?? '')) ?: $key,
                     'total' => 0,
@@ -354,19 +363,28 @@ final class OpsMetricsService
                 ];
             }
 
-            $modules[$key]['total']++;
+            $modules[$groupKey]['total']++;
             $totalResults++;
 
             if ((string) ($row->status ?? '') === 'Error') {
-                $modules[$key]['errors']++;
+                $modules[$groupKey]['errors']++;
                 $totalErrors++;
             }
         }
 
-        foreach ($modules as $key => $module) {
-            $modules[$key]['rate'] = $module['total'] > 0
+        foreach ($modules as $groupKey => $module) {
+            $modules[$groupKey]['rate'] = $module['total'] > 0
                 ? round(($module['errors'] / $module['total']) * 100, 1)
                 : 0.0;
+
+            $skip = $module['mode'] !== 'unknown'
+                ? $this->moduleSkips->activeSkipFor($module['mode'], $module['key'])
+                : null;
+            $modules[$groupKey]['skip_active'] = $skip !== null;
+            $modules[$groupKey]['skip_label'] = $skip['label'] ?? null;
+            $modules[$groupKey]['skip_reason'] = $skip['reason'] ?? null;
+            $modules[$groupKey]['skip_expires_at'] = $skip['expires_at'] ?? null;
+            $modules[$groupKey]['skip_duration'] = $skip['duration'] ?? null;
         }
 
         usort($modules, static function (array $left, array $right): int {

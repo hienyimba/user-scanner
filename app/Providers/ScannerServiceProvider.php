@@ -9,6 +9,7 @@ use App\Services\Scanner\MetadataAuditService;
 use App\Services\Scanner\MetadataBaselineValidationService;
 use App\Services\Scanner\MetadataEnrichmentService;
 use App\Services\Scanner\MetadataCapabilityService;
+use App\Services\Scanner\ModuleSkipService;
 use App\Services\Scanner\PatternExpanderService;
 use App\Services\Scanner\ProfileMetadataExtractor;
 use App\Services\Scanner\ProxyManagerService;
@@ -24,6 +25,7 @@ final class ScannerServiceProvider extends ServiceProvider
         $this->app->singleton(ProfileMetadataExtractor::class);
         $this->app->singleton(MetadataEnrichmentService::class);
         $this->app->singleton(MetadataCapabilityService::class);
+        $this->app->singleton(ModuleSkipService::class);
         $this->app->singleton(MetadataAuditService::class);
         $this->app->singleton(MetadataBaselineValidationService::class);
 
@@ -56,6 +58,7 @@ final class ScannerServiceProvider extends ServiceProvider
                 patternExpander: $app->make(PatternExpanderService::class),
                 metadataEnrichment: $app->make(MetadataEnrichmentService::class),
                 metadataCapability: $app->make(MetadataCapabilityService::class),
+                moduleSkips: $app->make(ModuleSkipService::class),
             );
         });
     }
