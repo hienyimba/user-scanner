@@ -90,8 +90,6 @@ final class ProxyExecutionPolicy
         foreach ([
             '403',
             '429',
-            'timeout',
-            'timed out',
             'forbidden',
             'cloudflare',
             'waf',
@@ -100,12 +98,24 @@ final class ProxyExecutionPolicy
             'rate limited',
             'ssl_read',
             'unexpected eof',
-            'curl error',
             'unexpected response body',
             'invalid api response format',
         ] as $needle) {
             if (str_contains($reason, $needle)) {
                 return true;
+            }
+        }
+
+        if ((bool) config('scanner.proxies.behavior.retry_timeout_failures', false)) {
+            foreach ([
+                'timeout',
+                'timed out',
+                'curl error 28',
+                'operation timed out',
+            ] as $needle) {
+                if (str_contains($reason, $needle)) {
+                    return true;
+                }
             }
         }
 

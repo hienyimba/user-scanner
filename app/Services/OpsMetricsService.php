@@ -138,7 +138,7 @@ final class OpsMetricsService
         $completion = $this->completionMetrics($range);
         $p95 = $this->p95Metrics($range);
         $reuse = $this->reuseMetrics($range);
-        $validatorErrors = $this->validatorErrorMetrics($range['start']);
+        $validatorErrors = $this->validatorErrorMetrics($range);
         $storage = $this->storageMetrics($range);
         $queue = $this->queueBacklogMetrics($range);
 
@@ -334,17 +334,25 @@ final class OpsMetricsService
     /**
      * @return array<string, mixed>
      */
-    private function validatorErrorMetrics(CarbonInterface $startDay): array
+    private function validatorErrorMetrics(array $range): array
     {
+        $series = [];
+        foreach ($range['keys'] as $key) {
+            $series[$key] = ['total' => 0, 'errors' => 0];
+        }
+
         $rows = DB::table('scan_run_results')
-            ->where('created_at', '>=', $startDay)
-            ->get(['mode', 'key', 'site_name', 'status']);
+            ->where('created_at', '>=', $range['start'])
+            ->get(['mode', 'key', 'site_name', 'status', 'created_at']);
 
         $modules = [];
         $totalResults = 0;
         $totalErrors = 0;
 
         foreach ($rows as $row) {
+            $createdAt = $this->parseDate($row->created_at);
+            $bucketKey = $createdAt !== null ? $this->bucketKey($createdAt, $range['bucket']) : null;
+
             $key = trim((string) ($row->key ?? ''));
             $mode = trim((string) ($row->mode ?? ''));
             if ($key === '') {
@@ -365,10 +373,16 @@ final class OpsMetricsService
 
             $modules[$groupKey]['total']++;
             $totalResults++;
+            if ($bucketKey !== null && isset($series[$bucketKey])) {
+                $series[$bucketKey]['total']++;
+            }
 
             if ((string) ($row->status ?? '') === 'Error') {
                 $modules[$groupKey]['errors']++;
                 $totalErrors++;
+                if ($bucketKey !== null && isset($series[$bucketKey])) {
+                    $series[$bucketKey]['errors']++;
+                }
             }
         }
 
@@ -403,6 +417,19 @@ final class OpsMetricsService
                 'labels' => array_map(static fn (array $module): string => $module['label'], $topModules),
                 'rates' => array_map(static fn (array $module): float => $module['rate'], $topModules),
                 'errors' => array_map(static fn (array $module): int => $module['errors'], $topModules),
+            ],
+            'percentage_chart' => [
+                'labels' => $range['labels'],
+                'rates' => array_map(
+                    static function (string $key) use ($series): ?float {
+                        return $series[$key]['total'] > 0
+                            ? round(($series[$key]['errors'] / $series[$key]['total']) * 100, 1)
+                            : null;
+                    },
+                    $range['keys'],
+                ),
+                'errors' => array_map(static fn (string $key): int => $series[$key]['errors'], $range['keys']),
+                'total' => array_map(static fn (string $key): int => $series[$key]['total'], $range['keys']),
             ],
         ];
     }

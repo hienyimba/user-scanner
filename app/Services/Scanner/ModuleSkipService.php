@@ -6,6 +6,8 @@ namespace App\Services\Scanner;
 
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Throwable;
 
 final class ModuleSkipService
 {
@@ -38,6 +40,10 @@ final class ModuleSkipService
 
     public function clearSkip(string $mode, string $moduleKey): void
     {
+        if (!$this->skipTableAvailable()) {
+            return;
+        }
+
         DB::table('scanner_module_skip_flags')
             ->where('mode', strtolower(trim($mode)))
             ->where('module_key', trim($moduleKey))
@@ -49,6 +55,10 @@ final class ModuleSkipService
      */
     public function activeSkipFor(string $mode, string $moduleKey): ?array
     {
+        if (!$this->skipTableAvailable()) {
+            return null;
+        }
+
         $row = DB::table('scanner_module_skip_flags')
             ->where('mode', strtolower(trim($mode)))
             ->where('module_key', trim($moduleKey))
@@ -81,6 +91,10 @@ final class ModuleSkipService
      */
     public function activeSkipsForMany(string $mode, array $moduleKeys): array
     {
+        if (!$this->skipTableAvailable()) {
+            return [];
+        }
+
         $keys = array_values(array_unique(array_filter(array_map('trim', $moduleKeys), static fn (string $key): bool => $key !== '')));
         if ($keys === []) {
             return [];
@@ -130,5 +144,14 @@ final class ModuleSkipService
             'permanent' => 'Skipped permanently',
             default => 'Skipped',
         };
+    }
+
+    private function skipTableAvailable(): bool
+    {
+        try {
+            return Schema::hasTable('scanner_module_skip_flags');
+        } catch (Throwable) {
+            return false;
+        }
     }
 }

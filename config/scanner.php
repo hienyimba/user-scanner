@@ -239,6 +239,9 @@ $configuredPoolProxyList = array_values(array_map(
 return [
     'user_agent' => env('SCANNER_USER_AGENT', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'),
     'verify_ssl' => env('SCANNER_VERIFY_SSL', false),
+    'http' => [
+        'connect_timeout_seconds' => (float) env('SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS', 3),
+    ],
     'proxy_list' => $explicitProxyList !== [] ? $explicitProxyList : $configuredPoolProxyList,
     'proxies' => [
         'provider' => env('SCANNER_PROXY_PROVIDER', 'oxylabs_isp'),
@@ -250,6 +253,7 @@ return [
         'behavior' => [
             'max_concurrent_per_proxy' => (int) env('SCANNER_PROXY_MAX_CONCURRENT_PER_IP', 2),
             'max_retry_per_module' => (int) env('SCANNER_PROXY_MAX_RETRY_PER_MODULE', 1),
+            'retry_timeout_failures' => env('SCANNER_PROXY_RETRY_TIMEOUT_FAILURES', false),
             'failure_threshold' => (int) env('SCANNER_PROXY_FAILURE_THRESHOLD', 2),
             'cooldown_min_seconds' => (int) env('SCANNER_PROXY_COOLDOWN_MIN_SECONDS', 30),
             'cooldown_max_seconds' => (int) env('SCANNER_PROXY_COOLDOWN_MAX_SECONDS', 90),

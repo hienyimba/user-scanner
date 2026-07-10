@@ -38,8 +38,8 @@ class AccountReverseCheck
 
     public function fetch(string $query, ?string $type): array
     {
-        $query = trim($query);
-        $type = preg_replace('/^(reverse_|monitor_)/', '', (string) $type);
+        $query = strtolower(trim($query));
+        $type  = preg_replace('/^(reverse_|monitor_)/', '', (string) $type);
 
         if ($query === '') {
             throw new InvalidArgumentException('Query cannot be empty.');
@@ -57,6 +57,16 @@ class AccountReverseCheck
             return $this->errorResponse($query, $type, 'Scanner API base URL is not configured.');
         }
 
+        $query = $this->normalizeQuery($query, $type);
+
+        if ($query === null) {
+            Log::warning(static::class . ' invalid query rejected before request', [
+                'type' => $type,
+                'query' => $query,
+            ]);
+            return null;
+        }
+
         try {
             $run = $this->startRun($query, $type);
             $runId = $run['run_id'] ?? null;
@@ -71,6 +81,28 @@ class AccountReverseCheck
         } catch (Throwable $e) {
             return $this->errorResponse($query, $type, $e->getMessage());
         }
+    }
+
+
+    protected function normalizeQuery(string $query, string $type): ?string
+    {
+        return match ($type) {
+            'email'    => $this->normalizeEmailQuery($query),
+            'username' => $this->normalizeUsernameQuery($query),
+            default    => null,
+        };
+    }
+
+    protected function normalizeEmailQuery(string $query): ?string
+    {
+        $query = strtolower(trim($query));
+        return filter_var($query, FILTER_VALIDATE_EMAIL) ? $query : null;
+    }
+
+    protected function normalizeUsernameQuery(string $query): ?string
+    {
+        $query = ltrim(trim($query), '@');
+        return preg_match('/^[A-Za-z0-9._-]{3,64}$/', $query) ? $query : null;
     }
 
     protected function startRun(string $query, string $type): array
@@ -186,6 +218,7 @@ class AccountReverseCheck
             'observed_metadata_level',
             'evidence',
             'sources',
+            'external_links',
             'http_status',
             'latency_ms',
             'proxy_used',

@@ -28,6 +28,7 @@ final class ProxyPoolIntegrationTest extends TestCase
         config()->set('scanner.proxies.credentials.password', 'p@ss=word');
         config()->set('scanner.proxies.behavior.max_concurrent_per_proxy', 1);
         config()->set('scanner.proxies.behavior.max_retry_per_module', 1);
+        config()->set('scanner.proxies.behavior.retry_timeout_failures', false);
         config()->set('scanner.proxies.behavior.failure_threshold', 2);
         config()->set('scanner.proxies.behavior.cooldown_min_seconds', 30);
         config()->set('scanner.proxies.behavior.cooldown_max_seconds', 30);
@@ -38,16 +39,26 @@ final class ProxyPoolIntegrationTest extends TestCase
     public function test_structured_proxy_pool_populates_sanitized_default_proxy_list(): void
     {
         $this->assertSame([
+            'disp.oxylabs.io:8020',
+            'disp.oxylabs.io:8019',
+            'disp.oxylabs.io:8018',
+            'disp.oxylabs.io:8017',
+            'disp.oxylabs.io:8016',
+            'disp.oxylabs.io:8015',
+            'disp.oxylabs.io:8014',
+            'disp.oxylabs.io:8013',
+            'disp.oxylabs.io:8012',
+            'disp.oxylabs.io:8011',
+            'disp.oxylabs.io:8010',
+            'disp.oxylabs.io:8009',
             'disp.oxylabs.io:8008',
+            'disp.oxylabs.io:8007',
+            'disp.oxylabs.io:8006',
             'disp.oxylabs.io:8005',
             'disp.oxylabs.io:8004',
             'disp.oxylabs.io:8003',
             'disp.oxylabs.io:8002',
             'disp.oxylabs.io:8001',
-            'disp.oxylabs.io:8010',
-            'disp.oxylabs.io:8009',
-            'disp.oxylabs.io:8007',
-            'disp.oxylabs.io:8006',
         ], config('scanner.proxy_list'));
     }
 
@@ -66,23 +77,23 @@ final class ProxyPoolIntegrationTest extends TestCase
     public function test_proxy_manager_cools_down_a_proxy_after_repeated_failures(): void
     {
         $manager = $this->freshProxyManager();
-        $manager->loadFromText("disp.oxylabs.io:8008\ndisp.oxylabs.io:8005");
+        $manager->loadFromText("disp.oxylabs.io:8005\ndisp.oxylabs.io:8004");
 
         $first = $manager->acquire(0);
         $this->assertNotNull($first);
-        $this->assertSame('disp.oxylabs.io:8008', $first['raw']);
+        $this->assertSame('disp.oxylabs.io:8005', $first['raw']);
         $manager->reportFailure($first['raw']);
         $manager->release($first['raw']);
 
         $second = $manager->acquire(0);
         $this->assertNotNull($second);
-        $this->assertSame('disp.oxylabs.io:8008', $second['raw']);
+        $this->assertSame('disp.oxylabs.io:8005', $second['raw']);
         $manager->reportFailure($second['raw']);
         $manager->release($second['raw']);
 
         $third = $manager->acquire(0);
         $this->assertNotNull($third);
-        $this->assertSame('disp.oxylabs.io:8005', $third['raw']);
+        $this->assertSame('disp.oxylabs.io:8004', $third['raw']);
         $manager->release($third['raw']);
     }
 
@@ -156,6 +167,49 @@ final class ProxyPoolIntegrationTest extends TestCase
         $this->assertCount(2, ProxyRetryValidator::$seenProxies);
         $this->assertStringContainsString('@disp.oxylabs.io:8008', ProxyRetryValidator::$seenProxies[0]);
         $this->assertStringContainsString('@disp.oxylabs.io:8007', ProxyRetryValidator::$seenProxies[1]);
+    }
+
+    public function test_timeout_shaped_proxy_errors_do_not_retry_by_default(): void
+    {
+        ProxyTimeoutValidator::$seenProxies = [];
+        $this->swapValidators(new ProxyTimeoutValidator());
+
+        $result = app(ScannerEngineService::class)->runPlannedValidator(
+            mode: 'username',
+            validatorKey: 'proxy-timeout',
+            target: 'hienyimba',
+            options: [
+                'use_proxy' => true,
+                'proxy_list' => "disp.oxylabs.io:8008\ndisp.oxylabs.io:8007",
+            ],
+        );
+
+        $this->assertSame('Error', $result->status);
+        $this->assertSame('Request timeout', $result->reason);
+        $this->assertCount(1, ProxyTimeoutValidator::$seenProxies);
+        $this->assertStringContainsString('@disp.oxylabs.io:8008', ProxyTimeoutValidator::$seenProxies[0]);
+    }
+
+    public function test_timeout_shaped_proxy_errors_can_retry_when_enabled(): void
+    {
+        config()->set('scanner.proxies.behavior.retry_timeout_failures', true);
+        ProxyTimeoutValidator::$seenProxies = [];
+        $this->swapValidators(new ProxyTimeoutValidator());
+
+        $result = app(ScannerEngineService::class)->runPlannedValidator(
+            mode: 'username',
+            validatorKey: 'proxy-timeout',
+            target: 'hienyimba',
+            options: [
+                'use_proxy' => true,
+                'proxy_list' => "disp.oxylabs.io:8008\ndisp.oxylabs.io:8007",
+            ],
+        );
+
+        $this->assertSame('Found', $result->status);
+        $this->assertCount(2, ProxyTimeoutValidator::$seenProxies);
+        $this->assertStringContainsString('@disp.oxylabs.io:8008', ProxyTimeoutValidator::$seenProxies[0]);
+        $this->assertStringContainsString('@disp.oxylabs.io:8007', ProxyTimeoutValidator::$seenProxies[1]);
     }
 
     public function test_api_tester_page_shows_sanitized_proxy_list_without_credentials(): void
@@ -241,6 +295,66 @@ final class ProxyRetryValidator implements ValidatorContract
                 'url' => $this->siteUrl(),
                 'status' => 'Error',
                 'reason' => 'Unexpected response body',
+                'mode' => $this->mode(),
+                'key' => $this->key(),
+            ]);
+        }
+
+        return ScanResult::fromArray([
+            'target' => $target,
+            'category' => $this->category(),
+            'site_name' => $this->siteName(),
+            'url' => $this->siteUrl(),
+            'status' => 'Found',
+            'reason' => '',
+            'mode' => $this->mode(),
+            'key' => $this->key(),
+        ]);
+    }
+}
+
+final class ProxyTimeoutValidator implements ValidatorContract
+{
+    /** @var array<int, string> */
+    public static array $seenProxies = [];
+
+    public function key(): string
+    {
+        return 'proxy-timeout';
+    }
+
+    public function category(): string
+    {
+        return 'social';
+    }
+
+    public function mode(): string
+    {
+        return 'username';
+    }
+
+    public function siteName(): string
+    {
+        return 'Proxy Timeout';
+    }
+
+    public function siteUrl(): string
+    {
+        return 'https://proxy-timeout.test';
+    }
+
+    public function check(string $target, array $options = []): ScanResult
+    {
+        self::$seenProxies[] = (string) ($options['proxy'] ?? '');
+
+        if (str_contains((string) ($options['proxy'] ?? ''), ':8008')) {
+            return ScanResult::fromArray([
+                'target' => $target,
+                'category' => $this->category(),
+                'site_name' => $this->siteName(),
+                'url' => $this->siteUrl(),
+                'status' => 'Error',
+                'reason' => 'Request timeout',
                 'mode' => $this->mode(),
                 'key' => $this->key(),
             ]);

@@ -140,6 +140,8 @@ final class OpsMetricsDashboardTest extends TestCase
         $response->assertSee('Completion Rate');
         $response->assertSee('P95 Time To Final Result');
         $response->assertSee('Cache / Reuse Hit Rate');
+        $response->assertSee('Validator Error Rate %');
+        $response->assertSee('validator-error-rate-chart');
         $response->assertSee('Validator Error Rate By Module');
         $response->assertSee('Storage Growth');
         $response->assertSee('Queue Backlog');

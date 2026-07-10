@@ -172,6 +172,16 @@
         </div>
     </section>
 
+    <section class="rounded-3xl bg-white/85 backdrop-blur border border-white/70 shadow-xl p-6 space-y-4">
+        <div>
+            <h2 class="text-2xl font-display">Validator Error Rate %</h2>
+            <p class="text-sm text-slate-600 mt-1">Overall validator error percentage per {{ $dashboard['bucket'] }} bucket, calculated as Error results divided by all stored validator results.</p>
+        </div>
+        <div class="ops-chart-box">
+            <canvas id="validator-error-rate-chart"></canvas>
+        </div>
+    </section>
+
     <section class="grid xl:grid-cols-[1fr_0.9fr] gap-6 items-start">
         <div class="rounded-3xl bg-white/85 backdrop-blur border border-white/70 shadow-xl p-6 space-y-4">
             <div>
@@ -461,6 +471,54 @@
                     beginAtZero: true,
                     grid: {
                         drawOnChartArea: false,
+                    },
+                },
+            },
+        },
+    });
+
+    new Chart(document.getElementById('validator-error-rate-chart'), {
+        type: 'line',
+        data: {
+            labels: boot.validator_errors.percentage_chart.labels,
+            datasets: [
+                {
+                    label: 'Validator error rate %',
+                    data: boot.validator_errors.percentage_chart.rates,
+                    borderColor: colors.amber,
+                    backgroundColor: 'rgba(217, 119, 6, 0.18)',
+                    fill: true,
+                    tension: 0.35,
+                    spanGaps: true,
+                    pointRadius: 4,
+                    pointHoverRadius: 6,
+                },
+            ],
+        },
+        options: {
+            ...baseOptions(),
+            scales: {
+                ...baseOptions().scales,
+                y: {
+                    ...baseOptions().scales.y,
+                    max: 100,
+                    ticks: {
+                        callback: (value) => `${value}%`,
+                    },
+                },
+            },
+            plugins: {
+                ...baseOptions().plugins,
+                tooltip: {
+                    callbacks: {
+                        label: (context) => {
+                            const index = context.dataIndex;
+                            const rate = context.parsed.y ?? 0;
+                            const errors = boot.validator_errors.percentage_chart.errors[index] ?? 0;
+                            const total = boot.validator_errors.percentage_chart.total[index] ?? 0;
+
+                            return `${rate}% (${errors} errors / ${total} results)`;
+                        },
                     },
                 },
             },
