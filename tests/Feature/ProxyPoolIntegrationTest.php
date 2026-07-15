@@ -39,6 +39,16 @@ final class ProxyPoolIntegrationTest extends TestCase
     public function test_structured_proxy_pool_populates_sanitized_default_proxy_list(): void
     {
         $this->assertSame([
+            'disp.oxylabs.io:8030',
+            'disp.oxylabs.io:8029',
+            'disp.oxylabs.io:8028',
+            'disp.oxylabs.io:8027',
+            'disp.oxylabs.io:8026',
+            'disp.oxylabs.io:8025',
+            'disp.oxylabs.io:8024',
+            'disp.oxylabs.io:8023',
+            'disp.oxylabs.io:8022',
+            'disp.oxylabs.io:8021',
             'disp.oxylabs.io:8020',
             'disp.oxylabs.io:8019',
             'disp.oxylabs.io:8018',
@@ -60,6 +70,19 @@ final class ProxyPoolIntegrationTest extends TestCase
             'disp.oxylabs.io:8002',
             'disp.oxylabs.io:8001',
         ], config('scanner.proxy_list'));
+    }
+
+    public function test_structured_proxy_pool_reserves_gb_endpoints_as_fallbacks(): void
+    {
+        $fallbackPorts = array_values(array_map(
+            static fn (array $proxy): int => (int) $proxy['port'],
+            array_filter(
+                config('scanner.proxies.pool'),
+                static fn (array $proxy): bool => ($proxy['tier'] ?? null) === 'fallback',
+            ),
+        ));
+
+        $this->assertSame([8020, 8019, 8007, 8006], $fallbackPorts);
     }
 
     public function test_proxy_manager_resolves_configured_pool_members_with_credentials(): void

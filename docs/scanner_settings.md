@@ -22,13 +22,13 @@ SCANNER_ASYNC_JOB_TRIES=1
 SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS=3
 
 SCANNER_PROXY_PROVIDER=oxylabs_isp
-SCANNER_PROXY_MAX_CONCURRENT_PER_IP=2
+SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1
 SCANNER_PROXY_MAX_RETRY_PER_MODULE=1
 SCANNER_PROXY_RETRY_TIMEOUT_FAILURES=false
 SCANNER_PROXY_FAILURE_THRESHOLD=2
-SCANNER_PROXY_COOLDOWN_MIN_SECONDS=30
-SCANNER_PROXY_COOLDOWN_MAX_SECONDS=90
-SCANNER_PROXY_WAIT_TIMEOUT_SECONDS=15
+SCANNER_PROXY_COOLDOWN_MIN_SECONDS=60
+SCANNER_PROXY_COOLDOWN_MAX_SECONDS=180
+SCANNER_PROXY_WAIT_TIMEOUT_SECONDS=20
 SCANNER_PROXY_WAIT_RETRY_SECONDS=2
 
 SCANNER_METADATA_FETCH_PROFILE_HTML=true
@@ -38,6 +38,8 @@ SCANNER_METADATA_MAX_EXTERNAL_LINKS=10
 ```
 
 Do not fix proxy-capacity errors by only increasing `SCANNER_PROXY_WAIT_TIMEOUT_SECONDS`. That usually raises p95 and can push jobs into queue timeouts. First match queue worker concurrency to proxy capacity, skip failing modules, and keep timeout retries disabled.
+
+The current production-quality target is 30 configured proxies with 15 scanner queue workers. With `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1`, that leaves roughly 30 lease slots for 15 active workers before cooldowns, which favors cleaner proxy reputation over maximum throughput.
 
 ## General HTTP Settings
 
@@ -66,13 +68,13 @@ Do not fix proxy-capacity errors by only increasing `SCANNER_PROXY_WAIT_TIMEOUT_
 | `SCANNER_PROXY_USERNAME` | Proxy username added to configured pool proxies. | Set in production; leave blank only when proxies do not need auth. | Required for authenticated provider proxies. Do not commit real values. |
 | `SCANNER_PROXY_PASSWORD` | Proxy password added to configured pool proxies. | Set in production; leave blank only when proxies do not need auth. | Required for authenticated provider proxies. Do not commit real values. |
 | `SCANNER_PROXY_LIST` | Optional explicit proxy list. If non-empty, it replaces the structured pool from config. | Leave blank for normal production. | The built-in structured pool includes tier metadata. Use this only for emergency overrides or diagnostics. |
-| `SCANNER_PROXY_MAX_CONCURRENT_PER_IP` | Maximum simultaneous leased jobs per proxy endpoint. | `2` | With 20 proxies, this gives about 40 concurrent leases. Setting `1` is safer but can cause "No proxy capacity available" unless worker concurrency is also low. |
+| `SCANNER_PROXY_MAX_CONCURRENT_PER_IP` | Maximum simultaneous leased jobs per proxy endpoint. | `1` | With 30 proxies and 15 workers, one lease per endpoint gives enough capacity while reducing repeat pressure on any single ISP proxy. Raise to `2` only for a throughput incident. |
 | `SCANNER_PROXY_MAX_RETRY_PER_MODULE` | Maximum alternate-proxy retry attempts for retryable proxy-shaped failures. | `1` normally; `0` during incidents. | One retry can recover from a bad proxy or WAF block. More retries inflate p95 and drain capacity. |
 | `SCANNER_PROXY_RETRY_TIMEOUT_FAILURES` | Whether timeout-shaped failures should consume another proxy retry. | `false` | Timeouts usually mean slow target/proxy behavior. Retrying them doubles latency and was a contributor to queue timeouts. |
 | `SCANNER_PROXY_FAILURE_THRESHOLD` | Number of retryable failures before a proxy is cooled down. | `2` | Removes suspicious proxies quickly without cooling them down on a single noisy request. Use `3` only if capacity is tight and the provider is stable. |
-| `SCANNER_PROXY_COOLDOWN_MIN_SECONDS` | Minimum cooldown duration after a proxy hits the failure threshold. | `30` | Gives a bad proxy time to recover without removing capacity for too long. |
-| `SCANNER_PROXY_COOLDOWN_MAX_SECONDS` | Maximum cooldown duration after a proxy hits the failure threshold. | `90` | Adds jitter so failed proxies do not all re-enter at once. Avoid very high values unless you also reduce worker concurrency. |
-| `SCANNER_PROXY_WAIT_TIMEOUT_SECONDS` | How long a job waits for an available proxy lease before returning a capacity error. | `15` | Long enough to absorb brief contention, short enough to protect p95 and job timeout. |
+| `SCANNER_PROXY_COOLDOWN_MIN_SECONDS` | Minimum cooldown duration after a proxy hits the failure threshold. | `60` | Gives a suspicious proxy a real recovery window without risking capacity at the 30 proxy / 15 worker baseline. |
+| `SCANNER_PROXY_COOLDOWN_MAX_SECONDS` | Maximum cooldown duration after a proxy hits the failure threshold. | `180` | Adds jitter so failed proxies do not all re-enter at once. If capacity errors rise, shorten cooldowns before raising per-proxy concurrency. |
+| `SCANNER_PROXY_WAIT_TIMEOUT_SECONDS` | How long a job waits for an available proxy lease before returning a capacity error. | `20` | Long enough to absorb brief contention with 15 workers, while the 60-second job timeout still leaves room for one request and metadata enrichment. |
 | `SCANNER_PROXY_WAIT_RETRY_SECONDS` | Sleep interval between proxy lease attempts while waiting for capacity. | `2` | Keeps lock/database/cache pressure low while still checking often enough. |
 
 ### Proxy Capacity Rule Of Thumb
@@ -83,16 +85,16 @@ Approximate lease capacity is:
 enabled proxies * SCANNER_PROXY_MAX_CONCURRENT_PER_IP
 ```
 
-If the number of active queue workers is higher than this, jobs can hit "No proxy capacity available from configured pool" even when the proxies are healthy. Cooldowns reduce capacity further. For example, 20 proxies with `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1` gives roughly 20 active leases, before cooldowns.
+If the number of active queue workers is higher than this, jobs can hit "No proxy capacity available from configured pool" even when the proxies are healthy. Cooldowns reduce capacity further. For example, 30 proxies with `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1` gives roughly 30 active leases, before cooldowns; that is a healthy buffer for 15 workers.
 
 For production API traffic, prefer:
 
 | Situation | Suggested adjustment |
 | --- | --- |
-| Frequent capacity errors | Use `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=2`, shorten cooldowns to `30-90`, and reduce queue workers if workers exceed proxy capacity. |
+| Frequent capacity errors | First skip the worst failing modules and shorten cooldowns to `30-90`; raise `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=2` only if capacity is still the limiting factor. |
 | Many timeout errors | Keep `SCANNER_PROXY_RETRY_TIMEOUT_FAILURES=false`; do not increase retries. |
 | Many 403/429/WAF errors | Use ops skip flags for the worst modules, keep one proxy retry, and inspect whether the module is broken. |
-| Need maximum caution with provider reputation | Use `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1`, but reduce worker count and accept lower throughput. |
+| Need maximum caution with provider reputation | Keep `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1`; with the 30 proxy pool, 15 workers should still have enough room. |
 
 ## Metadata Settings
 
@@ -125,11 +127,11 @@ Use these as quick starting points during operational incidents.
 SCANNER_PROXY_MAX_CONCURRENT_PER_IP=2
 SCANNER_PROXY_COOLDOWN_MIN_SECONDS=30
 SCANNER_PROXY_COOLDOWN_MAX_SECONDS=90
-SCANNER_PROXY_WAIT_TIMEOUT_SECONDS=15
+SCANNER_PROXY_WAIT_TIMEOUT_SECONDS=20
 SCANNER_PROXY_RETRY_TIMEOUT_FAILURES=false
 ```
 
-Also reduce queue worker count if active workers exceed proxy lease capacity.
+This is a temporary throughput preset. Return to `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1` after the capacity incident if result quality or block rates degrade.
 
 ### High p95 / Queue Timeouts
 
