@@ -381,6 +381,11 @@ return [
         'poll_interval_ms' => (int) env('SCANNER_POLL_INTERVAL_MS', 2000),
     ],
 
+    'storage' => [
+        'result_retention_days' => (int) env('SCANNER_RESULT_RETENTION_DAYS', 7),
+        'prune_chunk_size' => (int) env('SCANNER_RESULT_PRUNE_CHUNK_SIZE', 1000),
+    ],
+
     'metadata' => [
         'fetch_profile_html' => env('SCANNER_METADATA_FETCH_PROFILE_HTML', true),
         'request_timeout_seconds' => (int) env('SCANNER_METADATA_TIMEOUT_SECONDS', 8),

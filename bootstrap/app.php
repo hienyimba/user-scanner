@@ -23,6 +23,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ])
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('scanner:ops-snapshot')->everyFiveMinutes()->withoutOverlapping();
+        $schedule->command('scanner:prune-results')->dailyAt('02:15')->withoutOverlapping(120);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

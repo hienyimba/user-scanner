@@ -222,7 +222,7 @@ final class ScanRunStore
         }
 
         if ($category) {
-            $query->whereRaw('lower(category) = ?', [strtolower($category)]);
+            $query->where('category', strtolower($category));
         }
 
         return array_map(fn ($row): array => $this->normalizeStoredRow($row), $query->get()->all());

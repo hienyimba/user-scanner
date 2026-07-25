@@ -1,6 +1,7 @@
 <?php
 
 use App\Services\OpsMetricsService;
+use App\Services\ScanRunResultPruner;
 use App\Services\Scanner\MetadataAuditService;
 use App\Services\Scanner\MetadataBaselineValidationService;
 use App\Services\Scanner\MetadataCapabilityService;
@@ -27,6 +28,46 @@ Artisan::command('scanner:ops-snapshot', function (OpsMetricsService $metrics): 
 
     return Command::SUCCESS;
 })->purpose('Capture a DB-backed queue backlog snapshot for the ops dashboard');
+
+Artisan::command(
+    'scanner:prune-results
+    {--days= : Delete results strictly older than this many days}
+    {--chunk= : Maximum rows to delete per batch}',
+    function (ScanRunResultPruner $pruner): int {
+        $daysOption = $this->option('days');
+        $chunkOption = $this->option('chunk');
+        $retentionDays = $daysOption === null
+            ? (int) config('scanner.storage.result_retention_days', 7)
+            : filter_var($daysOption, FILTER_VALIDATE_INT);
+        $chunkSize = $chunkOption === null
+            ? (int) config('scanner.storage.prune_chunk_size', 1000)
+            : filter_var($chunkOption, FILTER_VALIDATE_INT);
+
+        if ($retentionDays === false || $retentionDays < 1) {
+            $this->error('The retention window must be a whole number of at least 1 day.');
+
+            return Command::INVALID;
+        }
+
+        if ($chunkSize === false || $chunkSize < 1) {
+            $this->error('The chunk size must be a whole number of at least 1 row.');
+
+            return Command::INVALID;
+        }
+
+        $cutoff = now()->subDays($retentionDays);
+        $deleted = $pruner->pruneBefore($cutoff, $chunkSize);
+
+        $this->info(sprintf(
+            'Pruned %d scan result row%s created before %s.',
+            $deleted,
+            $deleted === 1 ? '' : 's',
+            $cutoff->toDateTimeString(),
+        ));
+
+        return Command::SUCCESS;
+    }
+)->purpose('Delete scan result rows older than the configured retention window');
 
 Artisan::command(
     'scanner:metadata-readiness

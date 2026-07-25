@@ -111,7 +111,9 @@ final class OpsMetricsService
 
     public function ensureRecentQueueSnapshot(int $maxAgeMinutes = 15): void
     {
+        $queue = (string) config('scanner.async.queue', 'scanner');
         $latest = DB::table('ops_queue_snapshots')
+            ->where('queue_name', $queue)
             ->orderByDesc('created_at')
             ->value('created_at');
 
@@ -284,14 +286,11 @@ final class OpsMetricsService
         $cached = 0;
 
         $rows = DB::table('public_scan_request_events')
+            ->where('ok', true)
             ->where('created_at', '>=', $range['start'])
             ->get(['created_at', 'ok', 'reused', 'cached']);
 
         foreach ($rows as $row) {
-            if (!(bool) $row->ok) {
-                continue;
-            }
-
             $createdAt = $this->parseDate($row->created_at);
             if ($createdAt === null) {
                 continue;
@@ -386,13 +385,25 @@ final class OpsMetricsService
             }
         }
 
+        $moduleKeysByMode = [];
+        foreach ($modules as $module) {
+            if ($module['mode'] !== 'unknown') {
+                $moduleKeysByMode[$module['mode']][] = $module['key'];
+            }
+        }
+
+        $activeSkipsByMode = [];
+        foreach ($moduleKeysByMode as $mode => $moduleKeys) {
+            $activeSkipsByMode[$mode] = $this->moduleSkips->activeSkipsForMany($mode, $moduleKeys);
+        }
+
         foreach ($modules as $groupKey => $module) {
             $modules[$groupKey]['rate'] = $module['total'] > 0
                 ? round(($module['errors'] / $module['total']) * 100, 1)
                 : 0.0;
 
             $skip = $module['mode'] !== 'unknown'
-                ? $this->moduleSkips->activeSkipFor($module['mode'], $module['key'])
+                ? ($activeSkipsByMode[$module['mode']][$module['key']] ?? null)
                 : null;
             $modules[$groupKey]['skip_active'] = $skip !== null;
             $modules[$groupKey]['skip_label'] = $skip['label'] ?? null;
@@ -514,7 +525,9 @@ final class OpsMetricsService
             $bucketRows[$key] = null;
         }
 
+        $queue = (string) config('scanner.async.queue', 'scanner');
         $rows = DB::table('ops_queue_snapshots')
+            ->where('queue_name', $queue)
             ->where('created_at', '>=', $range['start'])
             ->orderBy('created_at')
             ->get([
