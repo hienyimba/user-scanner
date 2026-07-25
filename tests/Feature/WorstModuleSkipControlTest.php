@@ -18,6 +18,8 @@ use Tests\TestCase;
  * - apexlegends: tracker.gg PerimeterX block; public API requires a key
  * - walmart/samsclub: identity GraphQL deterministically fails every lookup
  *   with SOMETHING_WENT_WRONG (server-side bot gating)
+ * - github (email): TLS-fingerprint bot wall on /signup (403) and 406 on
+ *   signup_check on every exit; no unauthenticated email-check path remains
  */
 final class WorstModuleSkipControlTest extends TestCase
 {
@@ -62,7 +64,7 @@ final class WorstModuleSkipControlTest extends TestCase
         }
 
         $emailSkips = config('scanner.auto_skip.email', []);
-        foreach (['walmart', 'samsclub'] as $key) {
+        foreach (['walmart', 'samsclub', 'github'] as $key) {
             $this->assertArrayHasKey($key, $emailSkips);
             $this->assertNotSame('', (string) $emailSkips[$key]);
         }
@@ -89,6 +91,7 @@ final class WorstModuleSkipControlTest extends TestCase
         return [
             'walmart' => ['walmart'],
             'samsclub' => ['samsclub'],
+            'github' => ['github'],
         ];
     }
 }

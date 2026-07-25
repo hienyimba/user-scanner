@@ -15,6 +15,7 @@ use App\Services\Scanner\Validators\Generated\User\CodecademyValidator;
 use App\Services\Scanner\Validators\Generated\User\CodeforcesValidator;
 use App\Services\Scanner\Validators\Generated\User\DailyDevValidator;
 use App\Services\Scanner\Validators\Generated\User\DiscordValidator;
+use App\Services\Scanner\Validators\Generated\User\LastfmValidator;
 use App\Services\Scanner\Validators\Generated\User\LiberapayValidator;
 use App\Services\Scanner\Validators\Generated\User\MinecraftValidator;
 use App\Services\Scanner\Validators\Generated\User\RedditValidator;
@@ -3744,29 +3745,19 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame('Taken', $result->status);
     }
 
-    public function test_hackernews_profile_extracts_metadata_from_primary_html(): void
+    public function test_hackernews_profile_extracts_metadata_from_firebase_api(): void
     {
+        // The validator queries the official Hacker News Firebase API, which
+        // is CDN-served and avoids the news.ycombinator.com per-IP scrape
+        // rate limit that caused batch-wide errors.
         Http::fake([
-            '*' => Http::response(
-                <<<'HTML'
-                <html>
-                <head>
-                    <link rel="canonical" href="https://news.ycombinator.com/user?id=pg">
-                    <title>Profile: pg | Hacker News</title>
-                </head>
-                <body>
-                    <table>
-                        <tr><td valign="top">user:</td><td><a href="user?id=pg" class="hnuser">pg</a></td></tr>
-                        <tr><td valign="top">created:</td><td>October 9, 2006</td></tr>
-                        <tr><td valign="top">karma:</td><td>157316</td></tr>
-                        <tr><td valign="top">about:</td><td>Bug fixer. <a href="https://www.paulgraham.com/">Website</a></td></tr>
-                    </table>
-                </body>
-                </html>
-                HTML,
-                200,
-                ['Content-Type' => 'text/html']
-            ),
+            '*' => Http::response([
+                'id' => 'pg',
+                'created' => 1160418092,
+                'karma' => 157316,
+                'about' => 'Bug fixer. <a href="https://www.paulgraham.com/">Website</a>',
+                'submitted' => [39667625, 37278578, 37278345],
+            ], 200, ['Content-Type' => 'application/json']),
         ]);
 
         $result = app(ScannerEngineService::class)->runPlannedValidator(
@@ -3780,10 +3771,34 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame('https://news.ycombinator.com/user?id=pg', $result->profileUrl);
         $this->assertSame('pg', $result->metadata['display_name']);
         $this->assertSame('Bug fixer. Website', $result->metadata['bio']);
-        $this->assertSame('2006-10-09T00:00:00+00:00', $result->metadata['created_at']);
+        $this->assertSame('2006-10-09T18:21:32+00:00', $result->metadata['created_at']);
         $this->assertSame(157316, $result->metadata['karma']);
+        $this->assertSame(3, $result->metadata['posts_count']);
         $this->assertContains('https://www.paulgraham.com/', $result->metadata['external_links']);
+        $this->assertContains('api_json', $result->metadata['sources']);
         $this->assertSame(4, $result->metadata['observed_metadata_level']);
+    }
+
+    public function test_hackernews_firebase_null_is_available(): void
+    {
+        Http::fake([
+            '*' => Http::response('null', 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $result = (new HackernewsValidator())->check('missing-user');
+
+        $this->assertSame('Available', $result->status);
+    }
+
+    public function test_hackernews_firebase_malformed_payload_is_error(): void
+    {
+        Http::fake([
+            '*' => Http::response('<html>Service unavailable</html>', 200, ['Content-Type' => 'text/html']),
+        ]);
+
+        $result = (new HackernewsValidator())->check('pg');
+
+        $this->assertSame('Error', $result->status);
     }
 
     public function test_35photo_available_page_is_not_misclassified_by_recaptcha_footer_text(): void
@@ -4516,6 +4531,38 @@ final class UsernameValidatorRegressionTest extends TestCase
 
         $this->assertSame('Error', $result->status);
         $this->assertStringContainsString('blocked', $result->reason);
+    }
+
+    public function test_lastfm_406_rate_limit_is_retryable_error(): void
+    {
+        // Last.fm answers HTTP 406 once an exit's small per-IP request
+        // allowance is exhausted; the wording must keep the failure retryable
+        // for the proxy rotation policy.
+        Http::fake([
+            '*' => Http::response('<html>temporarily blocked</html>', 406, ['Content-Type' => 'text/html']),
+        ]);
+
+        $result = (new LastfmValidator())->check('hienyimba');
+
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('rate limited', $result->reason);
+    }
+
+    public function test_lastfm_nonstandard_600_status_is_retryable_error(): void
+    {
+        // Last.fm intermittently answers a custom HTTP 600 rate-limit page,
+        // which Guzzle rejects while parsing the response (wrapped as "An
+        // error was encountered while creating the response") before the
+        // connector parser ever runs. The catch layer must still surface a
+        // retryable rate-limit reason.
+        Http::fake(function () {
+            throw new \RuntimeException('An error was encountered while creating the response');
+        });
+
+        $result = (new LastfmValidator())->check('hienyimba');
+
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('rate limited', $result->reason);
     }
 
     /**

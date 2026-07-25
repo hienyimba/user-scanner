@@ -83,6 +83,15 @@ final class LastfmValidator extends BaseGeneratedValidator
             return ['Taken', ''];
         }
 
+        // Last.fm enforces a strict per-IP request allowance (~a handful of
+        // page loads per window): exhausted exits answer HTTP 406, and some
+        // intermittently answer a custom HTTP 600. Both are transient — the
+        // wording keeps the failure retryable so the proxy rotation policy
+        // re-attempts on a fresh exit.
+        if (in_array($status, [406, 600], true)) {
+            return ['Error', $this->key() . ': rate limited (HTTP ' . $status . ')'];
+        }
+
         return ['Error', 'Unexpected response body'];
     }
 

@@ -234,6 +234,14 @@ abstract class BaseGeneratedValidator implements ValidatorContract
                 str_contains($message, 'timed out') => 'Request timeout',
                 str_contains($message, 'ssl_read'),
                 str_contains($message, 'unexpected eof while reading') => 'TLS/anti-bot layer closed the connection unexpectedly',
+                // Some WAFs answer with nonstandard 6xx statuses (e.g. last.fm's
+                // HTTP 600 rate-limit page) which Guzzle rejects while parsing
+                // the response ("An error was encountered while creating the
+                // response", wrapping the PSR-7 "Status code must be an integer
+                // value between 1xx and 5xx" error). Keep this retryable so the
+                // proxy rotation policy re-attempts on a fresh exit.
+                str_contains($message, 'status code must be an integer value between 1xx and 5xx'),
+                str_contains($message, 'an error was encountered while creating the response') => $this->key() . ': rate limited (upstream returned a nonstandard HTTP status)',
                 default => $e->getMessage(),
             };
 
