@@ -114,6 +114,16 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
+     * Whether this validator may route its request through the configured
+     * proxy. Validators targeting anonymous public APIs that the proxy
+     * provider blocks at CONNECT time can opt out here.
+     */
+    protected function usesProxy(): bool
+    {
+        return true;
+    }
+
+    /**
      * @return array{0:string,1:string}
      */
     protected function parseConnectorResponse(Response $response, string $target): array
@@ -136,7 +146,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
 
 
-        if (!empty($options['proxy'])) {
+        if (!empty($options['proxy']) && $this->usesProxy()) {
             $request = $request->withOptions(['proxy' => $options['proxy']]);
         }
 

@@ -410,7 +410,12 @@ return [
     ],
 
     'auto_skip' => [
-        'username' => [],
+        'username' => [
+            'academia' => 'Cloudflare managed challenge (HTTP 403 "Just a moment") on direct and all proxied exits; no unauthenticated lookup path remains',
+            'liberapay' => 'Cloudflare managed challenge (HTTP 403 "Just a moment") on direct and all proxied exits; no unauthenticated lookup path remains',
+            'reddit' => 'Reddit network-security block (HTTP 403) on datacenter and ISP proxy exits for about.json lookups',
+            'apexlegends' => 'tracker.gg PerimeterX block (HTTP 403) on direct and proxied exits; public API now requires an API key',
+        ],
         'email' => [
             'fapfolder' => '403',
             'lovescape' => 'Unexpected: Username is already used',
@@ -436,6 +441,8 @@ return [
             'flipkart' => 'Notifies the target by forgot password email or similar',
             'instagram' => 'Notifies the target by forgot password email or similar',
             'polarsteps' => 'Notifies the target by forgot password email or similar',
+            'walmart' => 'Walmart identity GraphQL now fails every lookup with SOMETHING_WENT_WRONG (server-side bot gating) on direct and proxied exits',
+            'samsclub' => 'SamsClub identity GraphQL now fails every lookup with SOMETHING_WENT_WRONG / PerimeterX 412 on direct and proxied exits',
         ],
     ],
 

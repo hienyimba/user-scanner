@@ -66,12 +66,39 @@ final class VenmoValidator extends BaseGeneratedValidator
      */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        if ($response->status() === 404) {
+        $status = $response->status();
+
+        if ($status === 404) {
+            // Parity with venmo-osint: a JSON 404 means the user does not exist,
+            // while an HTML 404 stub page means Venmo is throttling this IP.
+            $contentType = strtolower((string) $response->header('Content-Type'));
+            $body = ltrim($response->body());
+            if (str_contains($contentType, 'html') || str_starts_with($body, '<')) {
+                return ['Error', 'venmo: rate-limited (HTML 404 stub page)'];
+            }
+
             return ['Available', ''];
         }
 
-        if ($response->status() !== 200) {
-            return ['Error', 'Unexpected status: ' . $response->status()];
+        if ($status === 400) {
+            // The v1 users API answers HTTP 400 with code 283 ("Resource not found.")
+            // for usernames that do not exist.
+            $error = $response->json('error');
+            $code = is_array($error) ? ($error['code'] ?? null) : null;
+            $message = is_array($error) ? strtolower((string) ($error['message'] ?? '')) : '';
+            if ($code === 283 || str_contains($message, 'resource not found')) {
+                return ['Available', ''];
+            }
+
+            return ['Error', 'Unexpected status: 400'];
+        }
+
+        if ($status === 429) {
+            return ['Error', 'venmo: rate-limited (HTTP 429)'];
+        }
+
+        if ($status !== 200) {
+            return ['Error', 'Unexpected status: ' . $status];
         }
 
         $user = $this->extractUserPayload($response, $target);

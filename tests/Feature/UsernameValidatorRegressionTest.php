@@ -14,6 +14,11 @@ use App\Services\Scanner\Validators\Generated\User\AsciinemaValidator;
 use App\Services\Scanner\Validators\Generated\User\CodecademyValidator;
 use App\Services\Scanner\Validators\Generated\User\CodeforcesValidator;
 use App\Services\Scanner\Validators\Generated\User\DailyDevValidator;
+use App\Services\Scanner\Validators\Generated\User\DiscordValidator;
+use App\Services\Scanner\Validators\Generated\User\LiberapayValidator;
+use App\Services\Scanner\Validators\Generated\User\MinecraftValidator;
+use App\Services\Scanner\Validators\Generated\User\RedditValidator;
+use App\Services\Scanner\Validators\Generated\User\ThreadsValidator;
 use App\Services\Scanner\Validators\Generated\User\DuolingoValidator;
 use App\Services\Scanner\Validators\Generated\User\DiscourseMetaValidator;
 use App\Services\Scanner\Validators\Generated\User\ElixirForumValidator;
@@ -49,6 +54,16 @@ use Tests\TestCase;
 
 final class UsernameValidatorRegressionTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // These tests exercise validator parse logic directly; bypass the
+        // production auto-skip catalog (academia/liberapay/reddit/apexlegends
+        // are live-skipped).
+        config()->set('scanner.auto_skip.username', []);
+    }
+
     public function test_get_query_parameters_embedded_in_request_url_are_preserved(): void
     {
         Http::fake(function (Request $request) {
@@ -4319,6 +4334,188 @@ final class UsernameValidatorRegressionTest extends TestCase
 
         $this->assertSame('Error', $result->status);
         $this->assertStringContainsString('blocked/rate-limited', $result->reason);
+    }
+
+    public function test_discord_posts_json_body_and_maps_taken_flag(): void
+    {
+        $captured = null;
+        Http::fake(function (Request $request) use (&$captured) {
+            $captured = $request;
+
+            return Http::response(['taken' => true], 200, ['Content-Type' => 'application/json']);
+        });
+
+        $result = (new DiscordValidator())->check('kaifcodec');
+
+        $this->assertSame('Taken', $result->status);
+        $this->assertNotNull($captured);
+        $this->assertSame('POST', $captured->method());
+        $this->assertSame('https://discord.com/api/v9/unique-username/username-attempt-unauthed', $captured->url());
+        $this->assertSame('application/json', $captured->toPsrRequest()->getHeaderLine('Content-Type'));
+        $this->assertSame(['username' => 'kaifcodec'], json_decode($captured->body(), true));
+    }
+
+    public function test_discord_taken_false_is_available(): void
+    {
+        Http::fake([
+            '*' => Http::response(['taken' => false], 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $result = (new DiscordValidator())->check('missing-user');
+
+        $this->assertSame('Available', $result->status);
+    }
+
+    public function test_minecraft_204_is_available(): void
+    {
+        Http::fake([
+            '*' => Http::response('', 204),
+        ]);
+
+        $result = (new MinecraftValidator())->check('missing-user');
+
+        $this->assertSame('Available', $result->status);
+    }
+
+    public function test_minecraft_bypasses_proxy_pool(): void
+    {
+        // api.mojang.com is blocked at CONNECT time by the Oxylabs ISP pool, so
+        // the validator must ignore the proxy option and query directly.
+        $usesProxy = new \ReflectionMethod(MinecraftValidator::class, 'usesProxy');
+        $usesProxy->setAccessible(true);
+
+        $validator = new MinecraftValidator();
+        $this->assertFalse($usesProxy->invoke($validator));
+
+        Http::fake([
+            '*' => Http::response(['id' => '069a79f444e94726a5befca90e38aaf5', 'name' => 'Notch'], 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $result = $validator->check('Notch', ['proxy' => 'http://127.0.0.1:1']);
+
+        $this->assertSame('Taken', $result->status);
+    }
+
+    public function test_threads_profile_url_includes_username(): void
+    {
+        $this->assertSame(
+            'https://www.threads.net/@zuck',
+            (new ThreadsValidator())->publicProfileUrl('zuck')
+        );
+    }
+
+    public function test_threads_200_is_taken(): void
+    {
+        Http::fake([
+            '*' => Http::response(['data' => ['user' => ['username' => 'zuck']]], 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $this->assertSame('Taken', (new ThreadsValidator())->check('zuck')->status);
+    }
+
+    public function test_threads_404_is_available(): void
+    {
+        Http::fake([
+            '*' => Http::response('<html><head><title>Page Not Found</title></head></html>', 404, ['Content-Type' => 'text/html']),
+        ]);
+
+        $this->assertSame('Available', (new ThreadsValidator())->check('missing-user')->status);
+    }
+
+    public function test_daily_dev_payload_without_noindex_or_user_is_retryable_error(): void
+    {
+        // daily.dev edge nodes occasionally serve an empty pageProps shell with
+        // no user and no noindex signal; this must surface as a retryable error
+        // (contains "unexpected response body") so the proxy rotation policy
+        // can re-attempt on another exit, rather than guessing Taken/Available.
+        Http::fake([
+            '*' => Http::response(
+                <<<'HTML'
+                <html>
+                <body>
+                    <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{}},"page":"/[userId]"}</script>
+                </body>
+                </html>
+                HTML,
+                200,
+                ['Content-Type' => 'text/html']
+            ),
+        ]);
+
+        $result = (new DailyDevValidator())->check('kaifcodec');
+
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('unexpected response body', $result->reason);
+    }
+
+    public function test_daily_dev_noindex_false_without_user_is_taken(): void
+    {
+        // Indexed public profile whose user object is fetched client-side.
+        Http::fake([
+            '*' => Http::response(
+                <<<'HTML'
+                <html>
+                <body>
+                    <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"noindex":false}}}</script>
+                </body>
+                </html>
+                HTML,
+                200,
+                ['Content-Type' => 'text/html']
+            ),
+        ]);
+
+        $result = (new DailyDevValidator())->check('kaifcodec');
+
+        $this->assertSame('Taken', $result->status);
+    }
+
+    public function test_academia_cloudflare_challenge_is_blocked_error(): void
+    {
+        Http::fake([
+            '*' => Http::response(
+                '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title></head><body>Checking your browser</body></html>',
+                403,
+                ['Content-Type' => 'text/html']
+            ),
+        ]);
+
+        $result = (new AcademiaValidator())->check('hienyimba');
+
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('blocked', $result->reason);
+    }
+
+    public function test_liberapay_cloudflare_challenge_is_blocked_error(): void
+    {
+        Http::fake([
+            '*' => Http::response(
+                '<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title></head><body>Checking your browser</body></html>',
+                403,
+                ['Content-Type' => 'text/html']
+            ),
+        ]);
+
+        $result = (new LiberapayValidator())->check('hienyimba');
+
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('blocked', $result->reason);
+    }
+
+    public function test_reddit_network_block_page_is_blocked_error(): void
+    {
+        Http::fake([
+            '*' => Http::response(
+                '<body class="theme-beta"><div>You have been blocked by network security.</div></body>',
+                403,
+                ['Content-Type' => 'text/html']
+            ),
+        ]);
+
+        $result = (new RedditValidator())->check('spez');
+
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('blocked', $result->reason);
     }
 
     /**

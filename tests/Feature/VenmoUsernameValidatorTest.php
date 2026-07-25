@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature;
 
 use App\Services\Scanner\ScannerEngineService;
+use App\Services\Scanner\Validators\Generated\Manual\User\VenmoValidator;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -100,5 +101,83 @@ final class VenmoUsernameValidatorTest extends TestCase
         $overlay = require $overlayPath;
         $this->assertSame(4, $overlay['username']['venmo']['validated_level']);
         $this->assertSame(['eodioko'], $overlay['username']['venmo']['targets']);
+    }
+
+    public function test_venmo_400_resource_not_found_is_available(): void
+    {
+        // The live v1 users API answers HTTP 400 with code 283 for usernames
+        // that do not exist (previously misclassified as Error).
+        Http::fake([
+            '*' => Http::response([
+                'error' => [
+                    'message' => 'Resource not found.',
+                    'code' => 283,
+                    'links' => null,
+                    'title' => 'Error',
+                ],
+            ], 400, ['Content-Type' => 'application/json']),
+        ]);
+
+        $result = (new VenmoValidator())->check('missing-user');
+
+        $this->assertSame('Available', $result->status);
+    }
+
+    public function test_venmo_json_404_is_available(): void
+    {
+        Http::fake([
+            '*' => Http::response([
+                'error' => [
+                    'message' => 'Resource not found.',
+                    'code' => 283,
+                    'links' => null,
+                    'title' => 'Error',
+                ],
+            ], 404, ['Content-Type' => 'application/json']),
+        ]);
+
+        $result = (new VenmoValidator())->check('missing-user');
+
+        $this->assertSame('Available', $result->status);
+    }
+
+    public function test_venmo_html_404_stub_is_rate_limit_error(): void
+    {
+        // Per the venmo-osint parent repo: an HTML 404 stub page means Venmo is
+        // throttling this IP, not that the user is missing.
+        Http::fake([
+            '*' => Http::response(
+                '<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html><html><head><title>Venmo</title></head><body></body></html>',
+                404,
+                ['Content-Type' => 'text/html; charset=utf-8']
+            ),
+        ]);
+
+        $result = (new VenmoValidator())->check('missing-user');
+
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('rate-limited', $result->reason);
+    }
+
+    public function test_venmo_data_envelope_payload_is_taken(): void
+    {
+        // Live API shape nests the profile under a "data" envelope.
+        Http::fake([
+            '*' => Http::response([
+                'data' => [
+                    'date_joined' => '2013',
+                    'profile_picture_url' => 'https://pics-v3.venmo.com/avatar.jpg',
+                    'username' => 'venmo',
+                    'display_name' => 'Venmo',
+                    'id' => '1290060955648000288',
+                ],
+            ], 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $result = (new VenmoValidator())->check('venmo');
+
+        $this->assertSame('Taken', $result->status);
+        $this->assertSame('venmo', $result->metadata['username']);
+        $this->assertSame('Venmo', $result->metadata['display_name']);
     }
 }

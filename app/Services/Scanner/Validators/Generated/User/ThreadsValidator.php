@@ -31,7 +31,7 @@ final class ThreadsValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://www.threads.net/@';
+        return 'https://www.threads.net/@{user}';
     }
 
     protected function requestUrl(string $target): string

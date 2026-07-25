@@ -53,7 +53,7 @@ final class DiscordValidator extends BaseGeneratedValidator
     {
         return [
             'authority' => 'discord.com',
-            'accept' => '/',
+            'accept' => '*/*',
             'accept-language' => 'en-GB,en-US;q=0.9,en;q=0.8',
             'content-type' => 'application/json',
             'origin' => 'https://discord.com',
@@ -66,6 +66,13 @@ final class DiscordValidator extends BaseGeneratedValidator
         return [
             'username' => $target,
         ];
+    }
+
+    protected function requestBodyMode(): string
+    {
+        // Discord's unique-username endpoint rejects form-encoded payloads with
+        // HTTP 400; the body must be sent as JSON.
+        return 'json';
     }
 
     /** @return array{0:string,1:string} */

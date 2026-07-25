@@ -51,7 +51,15 @@ final class AdobeValidator extends BaseGeneratedValidator
 
     protected function timeoutSeconds(): int
     {
-        return 5;
+        return 10;
+    }
+
+    protected function usesProxy(): bool
+    {
+        // The Oxylabs ISP pool blocks auth.services.adobe.com at CONNECT time
+        // (403 from the proxy itself on every exit). This Adobe IMS endpoint is
+        // an anonymous public lookup API, so query it directly.
+        return false;
     }
 
     protected function requestHeaders(): array

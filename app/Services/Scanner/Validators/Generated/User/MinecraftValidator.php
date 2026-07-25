@@ -39,6 +39,14 @@ final class MinecraftValidator extends BaseGeneratedValidator
         return "https://api.mojang.com/minecraft/profile/lookup/name/{$target}";
     }
 
+    protected function usesProxy(): bool
+    {
+        // The Oxylabs ISP pool blocks api.mojang.com at CONNECT time (403 from
+        // the proxy itself on every exit). The Mojang lookup endpoint is an
+        // anonymous public API, so query it directly.
+        return false;
+    }
+
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {

@@ -77,21 +77,21 @@ final class DailyDevValidator extends BaseGeneratedValidator
         }
 
         if ($status !== 200) {
-            return ['Error', 'Could not read __NEXT_DATA__ payload, report it via GitHub issues.'];
+            return ['Error', 'daily_dev: unexpected response body (non-200 status ' . $status . ')'];
         }
 
         if (preg_match('/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s', $body, $matches) !== 1) {
-            return ['Error', 'Could not read __NEXT_DATA__ payload, report it via GitHub issues.'];
+            return ['Error', 'daily_dev: unexpected response body (no __NEXT_DATA__ payload)'];
         }
 
         $decoded = json_decode($matches[1], true);
         if (!is_array($decoded)) {
-            return ['Error', 'Could not read __NEXT_DATA__ payload, report it via GitHub issues.'];
+            return ['Error', 'daily_dev: unexpected response body (malformed __NEXT_DATA__)'];
         }
 
         $pageProps = $decoded['props']['pageProps'] ?? null;
         if (!is_array($pageProps)) {
-            return ['Error', 'Unexpected daily.dev payload shape, report it via GitHub issues.'];
+            return ['Error', 'daily_dev: unexpected response body (missing pageProps)'];
         }
 
         $userData = $pageProps['user'] ?? null;
@@ -99,11 +99,20 @@ final class DailyDevValidator extends BaseGeneratedValidator
             return ['Taken', ''];
         }
 
-        if (($pageProps['noindex'] ?? null) === true) {
+        $noindex = $pageProps['noindex'] ?? null;
+        if ($noindex === true) {
             return ['Available', ''];
         }
 
-        return ['Error', 'Unexpected daily.dev payload shape, report it via GitHub issues.'];
+        if ($noindex === false) {
+            // Indexed public profile; user data may be fetched client-side.
+            return ['Taken', ''];
+        }
+
+        // Ambiguous empty pageProps (daily.dev edge inconsistency): retryable
+        // so the proxy rotation policy can re-attempt on another exit, which
+        // typically serves a clean noindex/user signal.
+        return ['Error', 'daily_dev: unexpected response body (empty pageProps)'];
     }
 
     /**

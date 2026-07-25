@@ -17,6 +17,15 @@ use Tests\TestCase;
 
 final class EmailValidatorExtraMetadataTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // These tests exercise validator parse logic directly; bypass the
+        // production auto-skip catalog (walmart/samsclub are live-skipped).
+        config()->set('scanner.auto_skip.email', []);
+    }
+
     public function test_adobe_registered_result_includes_authentication_metadata(): void
     {
         Http::fake([
@@ -187,6 +196,47 @@ final class EmailValidatorExtraMetadataTest extends TestCase
         $this->assertSame(['AdobeID'], $result->metadata['account_types']);
         $this->assertContains('api_json', $result->metadata['sources']);
         $this->assertSame(4, $result->metadata['observed_metadata_level']);
+    }
+
+    public function test_adobe_empty_account_list_is_not_registered(): void
+    {
+        Http::fake([
+            'https://auth.services.adobe.com/signin/v2/users/accounts' => Http::response([], 200),
+        ]);
+
+        $result = (new AdobeValidator())->check('jane@example.com');
+
+        $this->assertSame('Not Registered', $result->status);
+    }
+
+    public function test_adobe_malformed_payload_is_error(): void
+    {
+        Http::fake([
+            'https://auth.services.adobe.com/signin/v2/users/accounts' => Http::response(['error' => 'bad request'], 200),
+        ]);
+
+        $result = (new AdobeValidator())->check('jane@example.com');
+
+        $this->assertSame('Error', $result->status);
+    }
+
+    public function test_adobe_bypasses_proxy_pool(): void
+    {
+        // auth.services.adobe.com is blocked at CONNECT time by the Oxylabs ISP
+        // pool, so the validator must ignore the proxy option and query directly.
+        $usesProxy = new \ReflectionMethod(AdobeValidator::class, 'usesProxy');
+        $usesProxy->setAccessible(true);
+
+        $validator = new AdobeValidator();
+        $this->assertFalse($usesProxy->invoke($validator));
+
+        Http::fake([
+            'https://auth.services.adobe.com/signin/v2/users/accounts' => Http::response([], 200),
+        ]);
+
+        $result = $validator->check('jane@example.com', ['proxy' => 'http://127.0.0.1:1']);
+
+        $this->assertSame('Not Registered', $result->status);
     }
 
     public function test_coursera_registered_result_exposes_structured_metadata(): void
