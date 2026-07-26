@@ -4437,6 +4437,52 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame('Available', (new ThreadsValidator())->check('missing-user')->status);
     }
 
+    public function test_threads_api_profile_is_taken_and_preserves_primary_metadata(): void
+    {
+        // Metadata is extracted from the web_profile_info API JSON directly, so
+        // enrichment does not depend on a second (rate-limit-prone) HTML fetch.
+        Http::fake([
+            '*' => Http::response([
+                'data' => [
+                    'user' => [
+                        'username' => 'zuck',
+                        'full_name' => 'Mark Zuckerberg',
+                        'biography' => 'I build stuff',
+                        'is_verified' => true,
+                        'is_private' => false,
+                        'follower_count' => 1234567,
+                        'profile_pic_url' => 'https://scontent.cdninstagram.com/v/t51.2885-19/zuck.jpg',
+                        'id' => '314216',
+                        'bio_links' => [
+                            ['url' => 'https://www.threads.net/@zuck'],
+                            ['url' => 'https://example.com/zuck'],
+                        ],
+                    ],
+                ],
+            ], 200, ['Content-Type' => 'application/json']),
+        ]);
+
+        $result = app(ScannerEngineService::class)->runPlannedValidator(
+            mode: 'username',
+            validatorKey: 'threads',
+            target: 'zuck',
+            options: ['enrich_metadata' => false],
+        );
+
+        $this->assertSame('Found', $result->status);
+        $this->assertSame('https://www.threads.net/@zuck', $result->profileUrl);
+        $this->assertSame('zuck', $result->metadata['username']);
+        $this->assertSame('Mark Zuckerberg', $result->metadata['display_name']);
+        $this->assertSame('I build stuff', $result->metadata['bio']);
+        $this->assertSame('https://scontent.cdninstagram.com/v/t51.2885-19/zuck.jpg', $result->metadata['avatar_url']);
+        $this->assertSame(1234567, $result->metadata['followers']);
+        $this->assertTrue((bool) $result->metadata['is_verified']);
+        $this->assertFalse((bool) $result->metadata['is_private']);
+        $this->assertSame('314216', $result->metadata['threads_user_id']);
+        $this->assertContains('https://example.com/zuck', $result->metadata['external_links']);
+        $this->assertContains('api_json', $result->metadata['sources']);
+    }
+
     public function test_daily_dev_payload_without_noindex_or_user_is_retryable_error(): void
     {
         // daily.dev edge nodes occasionally serve an empty pageProps shell with
