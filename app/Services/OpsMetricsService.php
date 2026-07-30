@@ -20,8 +20,7 @@ final class OpsMetricsService
 
     public function __construct(
         private readonly ModuleSkipService $moduleSkips,
-    ) {
-    }
+    ) {}
 
     public function recordPublicScanRequest(
         string $mode,
@@ -168,35 +167,30 @@ final class OpsMetricsService
             $series[$key] = ['completed' => 0, 'failed' => 0];
         }
 
-        $completed = 0;
-        $failed = 0;
-
+        $settledExpression = "CASE WHEN status = 'completed' THEN COALESCE(completed_at, updated_at) ELSE updated_at END";
+        $bucketExpression = $this->bucketExpression($settledExpression, $range['bucket']);
         $rows = DB::table('scan_runs')
             ->whereIn('status', ['completed', 'failed'])
             ->where('updated_at', '>=', $range['start'])
-            ->get(['status', 'completed_at', 'updated_at']);
+            ->whereRaw($settledExpression.' >= ?', [$range['start']])
+            ->selectRaw($bucketExpression.' AS bucket_key')
+            ->selectRaw("SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed")
+            ->selectRaw("SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed")
+            ->groupByRaw($bucketExpression)
+            ->get();
 
         foreach ($rows as $row) {
-            $settledAt = $this->settledAt((string) $row->status, $row->completed_at, $row->updated_at);
-            if ($settledAt === null || $settledAt->lt($range['start'])) {
+            $bucketKey = (string) ($row->bucket_key ?? '');
+            if (! isset($series[$bucketKey])) {
                 continue;
             }
 
-            $bucketKey = $this->bucketKey($settledAt, $range['bucket']);
-            if (!isset($series[$bucketKey])) {
-                continue;
-            }
-
-            if ((string) $row->status === 'completed') {
-                $completed++;
-                $series[$bucketKey]['completed']++;
-                continue;
-            }
-
-            $failed++;
-            $series[$bucketKey]['failed']++;
+            $series[$bucketKey]['completed'] = (int) ($row->completed ?? 0);
+            $series[$bucketKey]['failed'] = (int) ($row->failed ?? 0);
         }
 
+        $completed = array_sum(array_column($series, 'completed'));
+        $failed = array_sum(array_column($series, 'failed'));
         $settled = $completed + $failed;
 
         return [
@@ -236,7 +230,8 @@ final class OpsMetricsService
             ->where('status', 'completed')
             ->whereNotNull('completed_at')
             ->where('completed_at', '>=', $range['start'])
-            ->get(['created_at', 'completed_at']);
+            ->select(['created_at', 'completed_at'])
+            ->cursor();
 
         foreach ($rows as $row) {
             $createdAt = $this->parseDate($row->created_at);
@@ -247,7 +242,7 @@ final class OpsMetricsService
 
             $durationSeconds = max(0, $createdAt->diffInSeconds($completedAt));
             $bucketKey = $this->bucketKey($completedAt, $range['bucket']);
-            if (!isset($bucketDurations[$bucketKey])) {
+            if (! isset($bucketDurations[$bucketKey])) {
                 continue;
             }
 
@@ -281,39 +276,31 @@ final class OpsMetricsService
             $series[$key] = ['total' => 0, 'reused' => 0, 'cached' => 0];
         }
 
-        $total = 0;
-        $reused = 0;
-        $cached = 0;
-
+        $bucketExpression = $this->bucketExpression('created_at', $range['bucket']);
         $rows = DB::table('public_scan_request_events')
             ->where('ok', true)
             ->where('created_at', '>=', $range['start'])
-            ->get(['created_at', 'ok', 'reused', 'cached']);
+            ->selectRaw($bucketExpression.' AS bucket_key')
+            ->selectRaw('COUNT(*) AS total')
+            ->selectRaw('SUM(CASE WHEN reused = 1 THEN 1 ELSE 0 END) AS reused')
+            ->selectRaw('SUM(CASE WHEN cached = 1 THEN 1 ELSE 0 END) AS cached')
+            ->groupByRaw($bucketExpression)
+            ->get();
 
         foreach ($rows as $row) {
-            $createdAt = $this->parseDate($row->created_at);
-            if ($createdAt === null) {
+            $bucketKey = (string) ($row->bucket_key ?? '');
+            if (! isset($series[$bucketKey])) {
                 continue;
             }
 
-            $bucketKey = $this->bucketKey($createdAt, $range['bucket']);
-            if (!isset($series[$bucketKey])) {
-                continue;
-            }
-
-            $total++;
-            $series[$bucketKey]['total']++;
-
-            if ((bool) $row->reused) {
-                $reused++;
-                $series[$bucketKey]['reused']++;
-            }
-
-            if ((bool) $row->cached) {
-                $cached++;
-                $series[$bucketKey]['cached']++;
-            }
+            $series[$bucketKey]['total'] = (int) ($row->total ?? 0);
+            $series[$bucketKey]['reused'] = (int) ($row->reused ?? 0);
+            $series[$bucketKey]['cached'] = (int) ($row->cached ?? 0);
         }
+
+        $total = array_sum(array_column($series, 'total'));
+        $reused = array_sum(array_column($series, 'reused'));
+        $cached = array_sum(array_column($series, 'cached'));
 
         return [
             'total' => $total,
@@ -340,51 +327,62 @@ final class OpsMetricsService
             $series[$key] = ['total' => 0, 'errors' => 0];
         }
 
-        $rows = DB::table('scan_run_results')
+        $moduleRows = DB::table('scan_run_results')
             ->where('created_at', '>=', $range['start'])
-            ->get(['mode', 'key', 'site_name', 'status', 'created_at']);
+            ->whereNotNull('key')
+            ->where('key', '!=', '')
+            ->select(['mode', 'key'])
+            ->selectRaw('MAX(site_name) AS label')
+            ->selectRaw('COUNT(*) AS total')
+            ->selectRaw("SUM(CASE WHEN status = 'Error' THEN 1 ELSE 0 END) AS errors")
+            ->groupBy('mode', 'key')
+            ->get();
 
         $modules = [];
-        $totalResults = 0;
-        $totalErrors = 0;
-
-        foreach ($rows as $row) {
-            $createdAt = $this->parseDate($row->created_at);
-            $bucketKey = $createdAt !== null ? $this->bucketKey($createdAt, $range['bucket']) : null;
-
+        foreach ($moduleRows as $row) {
             $key = trim((string) ($row->key ?? ''));
             $mode = trim((string) ($row->mode ?? ''));
             if ($key === '') {
                 continue;
             }
 
-            $groupKey = ($mode !== '' ? $mode : 'unknown') . ':' . $key;
-            if (!isset($modules[$groupKey])) {
+            $groupKey = ($mode !== '' ? $mode : 'unknown').':'.$key;
+            if (! isset($modules[$groupKey])) {
                 $modules[$groupKey] = [
                     'mode' => $mode !== '' ? $mode : 'unknown',
                     'key' => $key,
-                    'label' => trim((string) ($row->site_name ?? '')) ?: $key,
+                    'label' => trim((string) ($row->label ?? '')) ?: $key,
                     'total' => 0,
                     'errors' => 0,
                     'rate' => 0.0,
                 ];
             }
 
-            $modules[$groupKey]['total']++;
-            $totalResults++;
-            if ($bucketKey !== null && isset($series[$bucketKey])) {
-                $series[$bucketKey]['total']++;
-            }
+            $modules[$groupKey]['total'] += (int) ($row->total ?? 0);
+            $modules[$groupKey]['errors'] += (int) ($row->errors ?? 0);
+        }
 
-            if ((string) ($row->status ?? '') === 'Error') {
-                $modules[$groupKey]['errors']++;
-                $totalErrors++;
-                if ($bucketKey !== null && isset($series[$bucketKey])) {
-                    $series[$bucketKey]['errors']++;
-                }
+        $bucketExpression = $this->bucketExpression('created_at', $range['bucket']);
+        $bucketRows = DB::table('scan_run_results')
+            ->where('created_at', '>=', $range['start'])
+            ->whereNotNull('key')
+            ->where('key', '!=', '')
+            ->selectRaw($bucketExpression.' AS bucket_key')
+            ->selectRaw('COUNT(*) AS total')
+            ->selectRaw("SUM(CASE WHEN status = 'Error' THEN 1 ELSE 0 END) AS errors")
+            ->groupByRaw($bucketExpression)
+            ->get();
+
+        foreach ($bucketRows as $row) {
+            $bucketKey = (string) ($row->bucket_key ?? '');
+            if (isset($series[$bucketKey])) {
+                $series[$bucketKey]['total'] = (int) ($row->total ?? 0);
+                $series[$bucketKey]['errors'] = (int) ($row->errors ?? 0);
             }
         }
 
+        $totalResults = array_sum(array_column($modules, 'total'));
+        $totalErrors = array_sum(array_column($modules, 'errors'));
         $moduleKeysByMode = [];
         foreach ($modules as $module) {
             if ($module['mode'] !== 'unknown') {
@@ -450,40 +448,8 @@ final class OpsMetricsService
      */
     private function storageMetrics(array $range): array
     {
-        $runBuckets = array_fill_keys($range['keys'], 0);
-        $resultBuckets = array_fill_keys($range['keys'], 0);
-
-        $runRows = DB::table('scan_runs')
-            ->where('created_at', '>=', $range['start'])
-            ->get(['created_at']);
-
-        foreach ($runRows as $row) {
-            $createdAt = $this->parseDate($row->created_at);
-            if ($createdAt === null) {
-                continue;
-            }
-
-            $bucketKey = $this->bucketKey($createdAt, $range['bucket']);
-            if (isset($runBuckets[$bucketKey])) {
-                $runBuckets[$bucketKey]++;
-            }
-        }
-
-        $resultRows = DB::table('scan_run_results')
-            ->where('created_at', '>=', $range['start'])
-            ->get(['created_at']);
-
-        foreach ($resultRows as $row) {
-            $createdAt = $this->parseDate($row->created_at);
-            if ($createdAt === null) {
-                continue;
-            }
-
-            $bucketKey = $this->bucketKey($createdAt, $range['bucket']);
-            if (isset($resultBuckets[$bucketKey])) {
-                $resultBuckets[$bucketKey]++;
-            }
-        }
+        $runBuckets = $this->bucketedCounts('scan_runs', $range);
+        $resultBuckets = $this->bucketedCounts('scan_run_results', $range);
 
         $runBaseline = DB::table('scan_runs')->where('created_at', '<', $range['start'])->count();
         $resultBaseline = DB::table('scan_run_results')->where('created_at', '<', $range['start'])->count();
@@ -530,7 +496,7 @@ final class OpsMetricsService
             ->where('queue_name', $queue)
             ->where('created_at', '>=', $range['start'])
             ->orderBy('created_at')
-            ->get([
+            ->select([
                 'created_at',
                 'queued_jobs',
                 'reserved_jobs',
@@ -538,7 +504,8 @@ final class OpsMetricsService
                 'queued_runs',
                 'running_runs',
                 'outstanding_results',
-            ]);
+            ])
+            ->cursor();
 
         $latest = null;
 
@@ -588,6 +555,47 @@ final class OpsMetricsService
                 'outstanding_results' => $outstandingResults,
             ],
         ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    private function bucketedCounts(string $table, array $range): array
+    {
+        $counts = array_fill_keys($range['keys'], 0);
+        $bucketExpression = $this->bucketExpression('created_at', $range['bucket']);
+        $rows = DB::table($table)
+            ->where('created_at', '>=', $range['start'])
+            ->selectRaw($bucketExpression.' AS bucket_key')
+            ->selectRaw('COUNT(*) AS aggregate_count')
+            ->groupByRaw($bucketExpression)
+            ->get();
+
+        foreach ($rows as $row) {
+            $bucketKey = (string) ($row->bucket_key ?? '');
+            if (isset($counts[$bucketKey])) {
+                $counts[$bucketKey] = (int) ($row->aggregate_count ?? 0);
+            }
+        }
+
+        return $counts;
+    }
+
+    private function bucketExpression(string $column, string $bucket): string
+    {
+        $driver = DB::connection()->getDriverName();
+
+        return match ($driver) {
+            'mysql', 'mariadb' => $bucket === 'hour'
+                ? "DATE_FORMAT({$column}, '%Y-%m-%d %H:00:00')"
+                : "DATE_FORMAT({$column}, '%Y-%m-%d')",
+            'pgsql' => $bucket === 'hour'
+                ? "TO_CHAR(DATE_TRUNC('hour', {$column}), 'YYYY-MM-DD HH24:00:00')"
+                : "TO_CHAR(DATE_TRUNC('day', {$column}), 'YYYY-MM-DD')",
+            default => $bucket === 'hour'
+                ? "STRFTIME('%Y-%m-%d %H:00:00', {$column})"
+                : "STRFTIME('%Y-%m-%d', {$column})",
+        };
     }
 
     /**
@@ -667,14 +675,14 @@ final class OpsMetricsService
         }
 
         if ($seconds < 60) {
-            return $seconds . 's';
+            return $seconds.'s';
         }
 
         if ($seconds < 3600) {
-            return round($seconds / 60, 1) . 'm';
+            return round($seconds / 60, 1).'m';
         }
 
-        return round($seconds / 3600, 1) . 'h';
+        return round($seconds / 3600, 1).'h';
     }
 
     private function parseDate(mixed $value): ?CarbonInterface
@@ -684,14 +692,5 @@ final class OpsMetricsService
         }
 
         return Carbon::parse((string) $value);
-    }
-
-    private function settledAt(string $status, mixed $completedAt, mixed $updatedAt): ?CarbonInterface
-    {
-        if ($status === 'completed') {
-            return $this->parseDate($completedAt) ?? $this->parseDate($updatedAt);
-        }
-
-        return $this->parseDate($updatedAt);
     }
 }
