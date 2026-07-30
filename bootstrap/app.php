@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\PublicApiCors;
 use App\Providers\ScannerServiceProvider;
 use Illuminate\Console\Scheduling\Schedule;
 use Illuminate\Foundation\Application;
@@ -15,7 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
-            'public.api.cors' => \App\Http\Middleware\PublicApiCors::class,
+            'public.api.cors' => PublicApiCors::class,
         ]);
     })
     ->withProviders([
@@ -23,7 +24,11 @@ return Application::configure(basePath: dirname(__DIR__))
     ])
     ->withSchedule(function (Schedule $schedule): void {
         $schedule->command('scanner:ops-snapshot')->everyFiveMinutes()->withoutOverlapping();
-        $schedule->command('scanner:prune-results')->dailyAt('02:15')->withoutOverlapping(120);
+        $schedule->command('scanner:prune-results')
+            ->hourlyAt(15)
+            ->withoutOverlapping(55)
+            ->runInBackground()
+            ->appendOutputTo(storage_path('logs/prune-results.log'));
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

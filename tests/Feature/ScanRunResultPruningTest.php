@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
@@ -41,11 +42,14 @@ final class ScanRunResultPruningTest extends TestCase
         $this->assertDatabaseHas('scan_runs', ['id' => 'retentiontestrun0000000000000001']);
     }
 
-    public function test_pruning_command_is_scheduled_daily(): void
+    public function test_pruning_command_is_scheduled_hourly(): void
     {
-        $this->artisan('schedule:list')
-            ->expectsOutputToContain('scanner:prune-results')
-            ->assertSuccessful();
+        $exitCode = Artisan::call('schedule:list');
+        $output = Artisan::output();
+
+        $this->assertSame(0, $exitCode);
+        $this->assertStringContainsString('15  * * * *', $output);
+        $this->assertStringContainsString('scanner:prune-results', $output);
     }
 
     private function insertRun(string $id): void

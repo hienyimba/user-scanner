@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use App\Services\OpsMetricsService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -133,6 +134,19 @@ final class OpsMetricsDashboardTest extends TestCase
             'updated_at' => now()->subMinutes(5),
         ]);
 
+        $metrics = app(OpsMetricsService::class)->dashboard('30d');
+
+        $this->assertSame(1, $metrics['completion']['completed']);
+        $this->assertSame(1, $metrics['completion']['failed']);
+        $this->assertSame(50.0, $metrics['completion']['rate']);
+        $this->assertSame(2, $metrics['reuse']['total']);
+        $this->assertSame(1, $metrics['reuse']['reused']);
+        $this->assertSame(1, $metrics['validator_errors']['total_errors']);
+        $this->assertSame(2, $metrics['validator_errors']['total_results']);
+        $this->assertSame(2, $metrics['storage']['window_runs']);
+        $this->assertSame(2, $metrics['storage']['window_results']);
+        $this->assertSame(4, $metrics['queue']['latest']['queued_jobs']);
+
         $response = $this->get(route('ops.metrics'));
 
         $response->assertOk();
@@ -171,5 +185,28 @@ final class OpsMetricsDashboardTest extends TestCase
         $response->assertSee('Hourly buckets');
         $response->assertSee(route('ops.metrics', ['window' => '30d']), false);
         $response->assertSee(route('ops.metrics', ['window' => '6h']), false);
+    }
+
+    public function test_ops_metrics_page_supports_long_window_presets(): void
+    {
+        DB::table('ops_queue_snapshots')->insert([
+            'queue_name' => 'scanner',
+            'queued_jobs' => 1,
+            'reserved_jobs' => 0,
+            'active_runs' => 1,
+            'queued_runs' => 1,
+            'running_runs' => 0,
+            'outstanding_results' => 2,
+            'created_at' => now()->subDays(6),
+            'updated_at' => now()->subDays(6),
+        ]);
+
+        $this->get(route('ops.metrics', ['window' => '7d']))
+            ->assertOk()
+            ->assertSee('7-day window');
+
+        $this->get(route('ops.metrics', ['window' => '30d']))
+            ->assertOk()
+            ->assertSee('30-day window');
     }
 }

@@ -443,7 +443,7 @@ return [
             'polarsteps' => 'Notifies the target by forgot password email or similar',
             'walmart' => 'Walmart identity GraphQL now fails every lookup with SOMETHING_WENT_WRONG (server-side bot gating) on direct and proxied exits',
             'samsclub' => 'SamsClub identity GraphQL now fails every lookup with SOMETHING_WENT_WRONG / PerimeterX 412 on direct and proxied exits',
-            //'github' => 'GitHub signup email-validity flow is behind a TLS-fingerprint bot wall (HTTP 403 JS challenge on /signup, 406 on signup_check) on direct and all proxied exits',
+            'github' => 'GitHub signup email-validity flow is behind a TLS-fingerprint bot wall (HTTP 403 JS challenge on /signup, 406 on signup_check) on direct and all proxied exits',
         ],
     ],
 
