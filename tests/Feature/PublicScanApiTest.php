@@ -83,6 +83,7 @@ final class PublicScanApiTest extends TestCase
         $this->assertTrue((bool) ($run['options']['only_found'] ?? false));
         $this->assertTrue((bool) ($run['options']['use_proxy'] ?? false));
         $this->assertTrue((bool) ($run['options']['store'] ?? false));
+        $this->assertSame(config('scanner.public_result_version'), $run['options']['result_version'] ?? null);
     }
 
     public function test_public_scan_create_reuses_running_matching_run_when_store_is_true(): void
@@ -93,7 +94,11 @@ final class PublicScanApiTest extends TestCase
         $runId = $store->createRun(
             mode: 'username',
             targets: ['alice'],
-            options: ['category' => 'social', 'store' => true],
+            options: [
+                'category' => 'social',
+                'store' => true,
+                'result_version' => config('scanner.public_result_version'),
+            ],
             expandedTargets: ['alice'],
             validatorCount: 1,
             expectedResults: 1,
@@ -127,7 +132,11 @@ final class PublicScanApiTest extends TestCase
         $runId = $store->createRun(
             mode: 'username',
             targets: ['alice'],
-            options: ['category' => 'social', 'store' => true],
+            options: [
+                'category' => 'social',
+                'store' => true,
+                'result_version' => config('scanner.public_result_version'),
+            ],
             expandedTargets: ['alice'],
             validatorCount: 1,
             expectedResults: 1,
@@ -180,7 +189,11 @@ final class PublicScanApiTest extends TestCase
         $runId = $store->createRun(
             mode: 'username',
             targets: ['alice'],
-            options: ['category' => 'social', 'store' => true],
+            options: [
+                'category' => 'social',
+                'store' => true,
+                'result_version' => config('scanner.public_result_version'),
+            ],
             expandedTargets: ['alice'],
             validatorCount: 1,
             expectedResults: 1,
@@ -219,6 +232,50 @@ final class PublicScanApiTest extends TestCase
         ]);
 
         $this->assertNotSame($runId, $response->json('run_id'));
+        Queue::assertPushed(RunValidatorJob::class);
+    }
+
+    public function test_public_scan_create_does_not_reuse_results_from_an_older_result_version(): void
+    {
+        Queue::fake();
+
+        $store = app(ScanRunStore::class);
+        $legacyRunId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: ['category' => 'social', 'store' => true],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+        $store->markJobStarted($legacyRunId);
+        $store->appendResult($legacyRunId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Alpha',
+            'url' => 'https://alpha.test',
+            'status' => 'Found',
+            'reason' => '',
+            'mode' => 'username',
+            'key' => 'alpha',
+        ], 0, 0);
+
+        $response = $this->postJson('/api/v1/scan', [
+            'mode' => 'username',
+            'target' => 'alice',
+            'category' => 'social',
+            'store' => true,
+        ]);
+
+        $response->assertAccepted()->assertJson([
+            'ok' => true,
+            'status' => 'queued',
+            'reused' => false,
+            'cached' => false,
+        ]);
+
+        $this->assertNotSame($legacyRunId, $response->json('run_id'));
         Queue::assertPushed(RunValidatorJob::class);
     }
 

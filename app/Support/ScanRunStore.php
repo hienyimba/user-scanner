@@ -185,9 +185,15 @@ final class ScanRunStore
     }
 
     /** @return array<string,mixed>|null */
-    public function findReusablePublicRun(string $mode, string $target, ?string $category = null, int $windowHours = 48): ?array
+    public function findReusablePublicRun(
+        string $mode,
+        string $target,
+        ?string $category = null,
+        int $windowHours = 48,
+        ?string $resultVersion = null,
+    ): ?array
     {
-        $activeRun = $this->findLatestMatchingRun($mode, $target, $category, ['queued', 'running']);
+        $activeRun = $this->findLatestMatchingRun($mode, $target, $category, ['queued', 'running'], null, $resultVersion);
         if ($activeRun !== null) {
             return $activeRun;
         }
@@ -198,6 +204,7 @@ final class ScanRunStore
             $category,
             ['completed'],
             now()->subHours($windowHours),
+            $resultVersion,
         );
     }
 
@@ -431,6 +438,7 @@ final class ScanRunStore
         ?string $category,
         array $statuses,
         mixed $completedAfter = null,
+        ?string $resultVersion = null,
     ): ?array {
         $query = DB::table('scan_runs')
             ->where('mode', $mode)
@@ -444,7 +452,7 @@ final class ScanRunStore
 
         foreach ($query->get()->all() as $run) {
             $hydrated = $this->hydrateRun($run);
-            if ($this->matchesPublicRun($hydrated, $target, $category)) {
+            if ($this->matchesPublicRun($hydrated, $target, $category, $resultVersion)) {
                 return $hydrated;
             }
         }
@@ -453,7 +461,7 @@ final class ScanRunStore
     }
 
     /** @param array<string, mixed> $run */
-    private function matchesPublicRun(array $run, string $target, ?string $category): bool
+    private function matchesPublicRun(array $run, string $target, ?string $category, ?string $resultVersion): bool
     {
         if (($run['target_count'] ?? 0) !== 1) {
             return false;
@@ -465,6 +473,10 @@ final class ScanRunStore
 
         $runCategory = $run['options']['category'] ?? null;
         if ($runCategory !== $category) {
+            return false;
+        }
+
+        if ($resultVersion !== null && ($run['options']['result_version'] ?? null) !== $resultVersion) {
             return false;
         }
 

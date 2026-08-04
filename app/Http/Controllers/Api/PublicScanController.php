@@ -28,12 +28,14 @@ final class PublicScanController extends Controller
     ): JsonResponse
     {
         $data = $request->validated();
+        $resultVersion = (string) config('scanner.public_result_version');
         $options = [
             'use_proxy' => (bool) ($data['use_proxy'] ?? false),
             'show_hits' => (bool) ($data['show_hits'] ?? false),
             'only_found' => (bool) ($data['show_hits'] ?? false),
             'store' => (bool) ($data['store'] ?? false),
             'category' => $data['category'] ?? null,
+            'result_version' => $resultVersion,
         ];
 
         if ($options['store'] === true) {
@@ -42,6 +44,7 @@ final class PublicScanController extends Controller
                 target: $data['target'],
                 category: $data['category'] ?? null,
                 windowHours: self::DEFAULT_REUSE_WINDOW_HOURS,
+                resultVersion: $resultVersion,
             );
 
             if ($reusedRun !== null) {

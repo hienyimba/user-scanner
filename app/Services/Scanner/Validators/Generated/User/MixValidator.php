@@ -31,12 +31,12 @@ final class MixValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://mix.com';
+        return 'https://mix.com/{user}';
     }
 
     protected function requestUrl(string $target): string
     {
-        return "https://mix.com/{$target}";
+        return 'https://mix.com/'.rawurlencode($target);
     }
 
     protected function requestHeaders(): array
@@ -51,14 +51,48 @@ final class MixValidator extends BaseGeneratedValidator
     {
         $status = $response->status();
 
+        if ($blocked = $this->detectBlockedOrChallenged($response)) {
+            return $blocked;
+        }
+
         if ($status === 404) {
             return ['Available', ''];
         }
 
-        if ($status === 200) {
+        if ($status !== 200) {
+            return ['Error', 'HTTP '.$status];
+        }
+
+        $body = $response->body();
+        $canonical = $this->extractCanonicalUrl($body);
+        $expectedUrl = 'https://mix.com/'.rawurlencode($target);
+        $title = $this->extractTitle($body);
+        $hasMatchingTitle = $title !== null
+            && str_contains(strtolower($title), '(@'.strtolower($target).')')
+            && str_contains(strtolower($title), 'mix');
+
+        if ($canonical !== null && strcasecmp(rtrim($canonical, '/'), $expectedUrl) === 0 && $hasMatchingTitle) {
             return ['Taken', ''];
         }
 
-        return ['Error', 'HTTP ' . $status];
+        return ['Error', 'Mix response did not contain matching profile evidence'];
+    }
+
+    private function extractCanonicalUrl(string $body): ?string
+    {
+        if (preg_match('/<link\b(?=[^>]*\brel=["\']canonical["\'])[^>]*\bhref=["\']([^"\']+)["\']/i', $body, $matches) !== 1) {
+            return null;
+        }
+
+        return html_entity_decode(trim($matches[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    }
+
+    private function extractTitle(string $body): ?string
+    {
+        if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $body, $matches) !== 1) {
+            return null;
+        }
+
+        return trim(html_entity_decode(strip_tags($matches[1]), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
     }
 }

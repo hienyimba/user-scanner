@@ -1370,7 +1370,10 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'status' => 'OK',
+                    'profil' => ['id' => 123, 'login' => 'alice'],
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -1380,8 +1383,11 @@ return [
         'target' => 'alice',
         'responses' => [
             [
-                'status' => 404,
-                'body' => 'missing profile',
+                'status' => 200,
+                'json' => [
+                    'status' => 'ERROR',
+                    'info' => 'Uzytkownik o podanym loginie nie istnieje.',
+                ],
             ],
         ],
         'expected' => 'Not Found',
@@ -1559,7 +1565,11 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'json' => [
+                    'status' => 'success',
+                    'id' => 123,
+                    'username' => 'alice',
+                ],
             ],
         ],
         'expected' => 'Found',
@@ -1569,8 +1579,12 @@ return [
         'target' => 'alice',
         'responses' => [
             [
-                'status' => 404,
-                'body' => 'missing profile',
+                'status' => 200,
+                'json' => [
+                    'status' => 'error',
+                    'reason' => 'user_not_found',
+                    'message' => 'User not found',
+                ],
             ],
         ],
         'expected' => 'Not Found',

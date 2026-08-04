@@ -39,7 +39,7 @@ final class PicsartValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://api.picsart.com/users/show/{$target}.json";
+        return 'https://api.picsart.com/users/show/'.rawurlencode($target).'.json';
     }
 
     protected function followRedirects(): bool
@@ -72,11 +72,28 @@ final class PicsartValidator extends BaseGeneratedValidator
             return ['Available', ''];
         }
 
-        if ($status === 200) {
+        if ($status !== 200) {
+            return ['Error', 'HTTP '.$status];
+        }
+
+        $data = $response->json();
+        if (! is_array($data)) {
+            return ['Error', 'Picsart returned invalid JSON'];
+        }
+
+        $apiStatus = strtolower(trim((string) ($data['status'] ?? '')));
+        $reason = strtolower(trim((string) ($data['reason'] ?? '')));
+        if ($apiStatus === 'error' && $reason === 'user_not_found') {
+            return ['Available', ''];
+        }
+
+        $username = trim((string) ($data['username'] ?? ''));
+        $id = $this->normalizeInteger($data['id'] ?? null);
+        if ($apiStatus === 'success' && $id !== null && $username !== '' && strcasecmp($username, $target) === 0) {
             return ['Taken', ''];
         }
 
-        return ['Error', 'Unexpected response body'];
+        return ['Error', 'Picsart response did not contain matching profile evidence'];
     }
 
     /**
@@ -85,12 +102,12 @@ final class PicsartValidator extends BaseGeneratedValidator
     protected function buildStructuredMetadata(Response $response, string $target, string $status): array
     {
         $fallback = parent::buildStructuredMetadata($response, $target, $status);
-        if (!in_array($status, ['Taken', 'Found'], true)) {
+        if (! in_array($status, ['Taken', 'Found'], true)) {
             return $fallback;
         }
 
         $data = $response->json();
-        if (!is_array($data)) {
+        if (! is_array($data)) {
             return $fallback;
         }
 
@@ -140,7 +157,7 @@ final class PicsartValidator extends BaseGeneratedValidator
 
     protected function buildExtraMetadata(Response $response, string $target, string $status): string
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
+        if (! in_array($status, ['Taken', 'Found'], true)) {
             return '';
         }
 
@@ -171,7 +188,7 @@ final class PicsartValidator extends BaseGeneratedValidator
 
     private function cleanString(mixed $value): ?string
     {
-        if (!is_scalar($value)) {
+        if (! is_scalar($value)) {
             return null;
         }
 
@@ -194,8 +211,7 @@ final class PicsartValidator extends BaseGeneratedValidator
     }
 
     /**
-     * @param mixed $existing
-     * @param array<int, string> $newSources
+     * @param  array<int, string>  $newSources
      * @return array<int, string>
      */
     private function mergeSources(mixed $existing, array $newSources): array
@@ -204,7 +220,7 @@ final class PicsartValidator extends BaseGeneratedValidator
         $merged = [];
 
         foreach (array_merge($sources, $newSources) as $source) {
-            if (!is_string($source) || trim($source) === '') {
+            if (! is_string($source) || trim($source) === '') {
                 continue;
             }
 

@@ -48,6 +48,10 @@ use App\Services\Scanner\Validators\Generated\User\WikipediaValidator;
 use App\Services\Scanner\ScannerEngineService;
 use App\Services\Scanner\Validators\Generated\User\HackernewsValidator;
 use App\Services\Scanner\Validators\Generated\Manual\User\GithubValidator;
+use App\Services\Scanner\Validators\Generated\User\FotkaValidator;
+use App\Services\Scanner\Validators\Generated\User\MixValidator;
+use App\Services\Scanner\Validators\Generated\User\PicsartValidator;
+use App\Services\Scanner\Validators\Generated\User\RiotIdValidator;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Http;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -1249,6 +1253,7 @@ final class UsernameValidatorRegressionTest extends TestCase
             '*' => Http::response([
                 'status' => 'success',
                 'id' => 5151,
+                'username' => 'kaifcodec',
                 'name' => 'Kaif Codec',
                 'status_message' => 'Making creative tools.',
                 'followers_count' => 640,
@@ -4609,6 +4614,107 @@ final class UsernameValidatorRegressionTest extends TestCase
 
         $this->assertSame('Error', $result->status);
         $this->assertStringContainsString('rate limited', $result->reason);
+    }
+
+    public function test_customer_username_does_not_return_the_four_reported_false_positives(): void
+    {
+        Http::fake([
+            'https://api.fotka.com/*' => Http::response([
+                'status' => 'ERROR',
+                'info' => 'Uzytkownik o podanym loginie nie istnieje.',
+            ], 200, ['Content-Type' => 'application/json']),
+            'https://api.picsart.com/*' => Http::response([
+                'status' => 'error',
+                'reason' => 'user_not_found',
+                'message' => 'User not found',
+            ], 200, ['Content-Type' => 'application/json']),
+            'https://mix.com/*' => Http::response(
+                '<html><head><title>Mix</title><link rel="canonical" href="https://mix.com" /></head></html>',
+                200,
+                ['Content-Type' => 'text/html']
+            ),
+        ]);
+
+        $results = app(ScannerEngineService::class)->scan(
+            target: 'rasheedbamidele',
+            mode: 'username',
+            moduleKeys: ['riot_id', 'fotka', 'picsart', 'mix'],
+            options: ['only_found' => true],
+        );
+
+        $this->assertSame([], $results);
+        Http::assertSentCount(3);
+    }
+
+    public function test_riot_id_requires_a_complete_name_and_tag_without_making_a_request(): void
+    {
+        Http::fake();
+
+        $result = (new RiotIdValidator())->check('rasheedbamidele');
+
+        $this->assertSame('Skipped', $result->status);
+        $this->assertStringContainsString('Name#Tag', $result->reason);
+        Http::assertNothingSent();
+    }
+
+    public function test_riot_id_uses_the_target_aware_lookup_endpoint(): void
+    {
+        Http::fake([
+            'https://www.riotid-lookup.com/api/lookup*' => Http::response(['isTaken' => true], 200),
+        ]);
+
+        $result = (new RiotIdValidator())->check('Alice#NA1');
+
+        $this->assertSame('Taken', $result->status);
+        Http::assertSent(fn (Request $request): bool => str_contains($request->url(), 'riotId=Alice%23NA1'));
+    }
+
+    public function test_fotka_requires_a_matching_profile_identity(): void
+    {
+        Http::fake([
+            '*' => Http::response([
+                'status' => 'OK',
+                'profil' => ['id' => 123, 'login' => 'someone-else'],
+            ], 200),
+        ]);
+
+        $result = (new FotkaValidator())->check('alice');
+
+        $this->assertSame('Error', $result->status);
+    }
+
+    public function test_picsart_requires_a_matching_profile_identity(): void
+    {
+        Http::fake([
+            '*' => Http::response([
+                'status' => 'success',
+                'id' => 123,
+                'username' => 'someone-else',
+            ], 200),
+        ]);
+
+        $result = (new PicsartValidator())->check('alice');
+
+        $this->assertSame('Error', $result->status);
+    }
+
+    public function test_mix_requires_profile_specific_html_evidence(): void
+    {
+        Http::fakeSequence()
+            ->push(
+                '<html><head><title>Mix</title><link rel="canonical" href="https://mix.com" /></head></html>',
+                200
+            )
+            ->push(
+                '<html><head><title>Alice (@alice) &#8226; Mix</title><link rel="canonical" href="https://mix.com/alice" /></head></html>',
+                200
+            );
+
+        $generic = (new MixValidator())->check('Alice');
+        $profile = (new MixValidator())->check('Alice');
+
+        $this->assertSame('Error', $generic->status);
+        $this->assertSame('Taken', $profile->status);
     }
 
     /**

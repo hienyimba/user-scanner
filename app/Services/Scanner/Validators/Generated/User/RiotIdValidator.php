@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\User;
 
+use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 
@@ -41,7 +42,7 @@ final class RiotIdValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://www.riotid-lookup.com";
+        return 'https://www.riotid-lookup.com/api/lookup?riotId='.rawurlencode(trim($target));
     }
 
     protected function followRedirects(): bool
@@ -57,63 +58,66 @@ final class RiotIdValidator extends BaseGeneratedValidator
     protected function requestHeaders(): array
     {
         return [
-            // No connector-specific headers inferred.
+            'Accept' => 'application/json',
+            'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         ];
+    }
+
+    public function check(string $target, array $options = []): ScanResult
+    {
+        if (! $this->hasCompleteRiotId($target)) {
+            return new ScanResult(
+                target: $target,
+                category: $this->category(),
+                siteName: $this->siteName(),
+                url: $this->siteUrl(),
+                status: 'Skipped',
+                reason: 'Riot ID format required: Name#Tag (for example, TenZ#00005)',
+                mode: $this->mode(),
+                key: $this->key(),
+                confidence: 0.0,
+                metadata: [
+                    'status_detail' => 'incomplete_identifier',
+                    'required_format' => 'Name#Tag',
+                    'sources' => [],
+                    'evidence' => [],
+                ],
+            );
+        }
+
+        return parent::check(trim($target), $options);
     }
 
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
-        $body = strtolower($response->body());
 
         if ($blocked = $this->detectBlockedOrChallenged($response)) {
             return $blocked;
         }
 
-        $availableStatuses = [];
-        $takenStatuses = [200];
-        $availableIndicators = [];
-        $takenIndicators = [];
-
-        if ($this->mode() === 'username') {
-            if (in_array($status, $availableStatuses, true)) {
-                return ['Available', ''];
-            }
-            if (in_array($status, $takenStatuses, true)) {
-                return ['Taken', ''];
-            }
-            foreach ($takenIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Taken', ''];
-                }
-            }
-            foreach ($availableIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Available', ''];
-                }
-            }
-
-            return ['Error', $this->key() . ': indeterminate username response (HTTP ' . $status . ')'];
+        if ($status === 400) {
+            return ['Error', 'Invalid Riot ID format'];
         }
 
-        if (in_array($status, $takenStatuses, true)) {
-            return ['Registered', ''];
-        }
-        if (in_array($status, $availableStatuses, true)) {
-            return ['Not Registered', ''];
-        }
-        foreach ($takenIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Registered', ''];
-            }
-        }
-        foreach ($availableIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Not Registered', ''];
+        if ($status === 200) {
+            $isTaken = data_get($response->json(), 'isTaken');
+            if (is_bool($isTaken)) {
+                return [$isTaken ? 'Taken' : 'Available', ''];
             }
         }
 
-        return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+        return ['Error', $this->key().': indeterminate lookup response (HTTP '.$status.')'];
+    }
+
+    private function hasCompleteRiotId(string $target): bool
+    {
+        $parts = explode('#', trim($target));
+
+        return count($parts) === 2
+            && trim($parts[0]) !== ''
+            && strlen(trim($parts[1])) >= 3
+            && strlen(trim($parts[1])) <= 5;
     }
 }
