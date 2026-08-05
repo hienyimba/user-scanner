@@ -4717,6 +4717,24 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame('Taken', $profile->status);
     }
 
+    public function test_mix_bypasses_the_proxy_pool(): void
+    {
+        $usesProxy = new \ReflectionMethod(MixValidator::class, 'usesProxy');
+        $usesProxy->setAccessible(true);
+
+        $validator = new MixValidator();
+
+        $this->assertFalse($usesProxy->invoke($validator));
+
+        Http::fake([
+            '*' => Http::response('', 404),
+        ]);
+
+        $result = $validator->check('missing-user', ['proxy' => 'http://127.0.0.1:1']);
+
+        $this->assertSame('Available', $result->status);
+    }
+
     /**
      * @return array<string, array{0:string,1:int,2:string}>
      */

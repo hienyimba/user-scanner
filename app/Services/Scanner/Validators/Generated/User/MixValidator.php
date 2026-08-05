@@ -46,6 +46,13 @@ final class MixValidator extends BaseGeneratedValidator
         ];
     }
 
+    protected function usesProxy(): bool
+    {
+        // Mix returns reliable 404/profile responses directly, while proxied
+        // requests frequently receive a generic page with no profile evidence.
+        return false;
+    }
+
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {

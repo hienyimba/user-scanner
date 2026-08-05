@@ -347,7 +347,7 @@ $configuredPoolProxyList = array_values(array_map(
 ));
 
 return [
-    'public_result_version' => '2026-08-04-username-evidence-v2',
+    'public_result_version' => '2026-08-05-mix-direct-v3',
     'user_agent' => env('SCANNER_USER_AGENT', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'),
     'verify_ssl' => env('SCANNER_VERIFY_SSL', false),
     'http' => [
