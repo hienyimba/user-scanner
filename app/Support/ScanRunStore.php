@@ -335,7 +335,7 @@ final class ScanRunStore
             return null;
         }
 
-        return json_encode($value, JSON_THROW_ON_ERROR);
+        return json_encode($value, JSON_THROW_ON_ERROR | JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     private function nullableString(mixed $value): ?string

@@ -538,6 +538,57 @@ final class PublicScanApiTest extends TestCase
         $this->assertNull($results[0]['normalized']['error']);
     }
 
+    public function test_scan_result_storage_substitutes_malformed_utf8_in_json_fields(): void
+    {
+        $store = app(ScanRunStore::class);
+        $runId = $store->createRun(
+            mode: 'username',
+            targets: ['alice'],
+            options: [],
+            expandedTargets: ['alice'],
+            validatorCount: 1,
+            expectedResults: 1,
+            selectedValidatorKeys: ['alpha'],
+        );
+
+        $store->markJobStarted($runId);
+        $store->appendResult($runId, [
+            'target' => 'alice',
+            'category' => 'social',
+            'site_name' => 'Alpha',
+            'url' => 'https://alpha.test/users/alice',
+            'status' => 'Found',
+            'reason' => '',
+            'extra' => '',
+            'mode' => 'username',
+            'key' => 'alpha',
+            'metadata' => [
+                'display_name' => "Alice \xC3\x28",
+                'nested' => ['bio' => "Invalid \xB1 text"],
+            ],
+            'external_links' => ["https://example.test/\xC3\x28"],
+        ], 0, 0);
+
+        $row = \Illuminate\Support\Facades\DB::table('scan_run_results')
+            ->where('scan_run_id', $runId)
+            ->first();
+
+        $this->assertNotNull($row);
+        $this->assertSame(
+            'Alice '."\u{FFFD}".'(',
+            json_decode((string) $row->metadata, true, flags: JSON_THROW_ON_ERROR)['display_name'],
+        );
+        $this->assertSame(
+            'Invalid '."\u{FFFD}".' text',
+            json_decode((string) $row->metadata, true, flags: JSON_THROW_ON_ERROR)['nested']['bio'],
+        );
+        $this->assertSame(
+            ['https://example.test/'."\u{FFFD}".'('],
+            json_decode((string) $row->external_links, true, flags: JSON_THROW_ON_ERROR),
+        );
+        $this->assertSame('completed', $store->getRun($runId)['status']);
+    }
+
     public function test_public_modules_endpoint_returns_categories_and_modules(): void
     {
         $summary = app(MetadataCapabilityService::class)->summary();
