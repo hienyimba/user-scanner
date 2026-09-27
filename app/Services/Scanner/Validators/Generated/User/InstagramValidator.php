@@ -4,11 +4,18 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\User;
 
+use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
+use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
 
 final class InstagramValidator extends BaseGeneratedValidator
 {
+    private const WARMUP_URL = 'https://www.instagram.com/accounts/emailsignup/';
+
+    private const SIGNUP_URL = 'https://www.instagram.com/api/v1/web/accounts/web_create_ajax/attempt/';
+
     public function key(): string
     {
         return 'instagram';
@@ -34,162 +41,233 @@ final class InstagramValidator extends BaseGeneratedValidator
         return 'https://www.instagram.com/{user}/';
     }
 
-    protected function requestUrl(string $target): string
+    public function check(string $target, array $options = []): ScanResult
     {
-        return 'https://www.instagram.com/api/v1/users/web_profile_info/';
-    }
+        $showUrl = 'https://www.instagram.com/'.rawurlencode($target).'/';
 
-    protected function requestQuery(string $target): array
-    {
-        return [
-            'username' => $target,
-        ];
-    }
-
-    protected function requestHeadersForTarget(string $target): array
-    {
-        return [
-            'Accept-Encoding' => 'gzip, deflate, br, zstd',
-            'sec-ch-ua-full-version-list' => '"Not(A:Brand";v="8.0.0.0", "Chromium";v="144.0.7559.132", "Google Chrome";v="144.0.7559.132"',
-            'sec-ch-ua-platform' => '"Linux"',
-            'sec-ch-ua' => '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-            'sec-ch-ua-model' => '""',
-            'sec-ch-ua-mobile' => '?0',
-            'x-ig-app-id' => '936619743392459',
-            'x-requested-with' => 'XMLHttpRequest',
-            'sec-ch-prefers-color-scheme' => 'dark',
-            'x-ig-www-claim' => '0',
-            'sec-ch-ua-platform-version' => '""',
-            'sec-fetch-site' => 'same-origin',
-            'sec-fetch-mode' => 'cors',
-            'sec-fetch-dest' => 'empty',
-            'referer' => "https://www.instagram.com/{$target}",
-            'accept-language' => 'en-US,en;q=0.9',
-            'priority' => 'u=1, i',
-        ];
-    }
-
-    /** @return array{0:string,1:string} */
-    protected function parseConnectorResponse(Response $response, string $target): array
-    {
-        $status = $response->status();
-        if ($status === 404) {
-            return ['Available', ''];
+        if (strlen($target) < 1 || strlen($target) > 30 || preg_match('/^[a-zA-Z0-9._]+$/', $target) !== 1) {
+            return $this->result($target, $showUrl, 'Error', 'Instagram usernames can only use 1-30 letters, numbers, underscores, and periods');
         }
 
-        if ($status === 200) {
-            if (data_get($response->json(), 'data.user') !== null) {
-                return ['Taken', ''];
+        try {
+            $cookies = new CookieJar;
+            $client = Http::timeout(15)->withOptions([
+                'allow_redirects' => false,
+                'verify' => (bool) config('scanner.verify_ssl', false),
+                'cookies' => $cookies,
+            ])->withHeaders([
+                'User-Agent' => (string) config('scanner.user_agent'),
+                'Accept-Language' => 'en-US,en;q=0.9',
+            ]);
+
+            if (! empty($options['proxy'])) {
+                $client = $client->withOptions(['proxy' => $options['proxy']]);
             }
 
-            return ['Available', ''];
-        }
+            $client->get(self::WARMUP_URL);
+            $profile = $client->get($showUrl);
+            $metadata = $this->profileMetadata($profile, $target);
+            if ($metadata !== null) {
+                return $this->result($target, $showUrl, 'Taken', metadata: $metadata);
+            }
 
-        return ['Error', $this->key() . ': blocked/rate-limited (HTTP ' . $status . ')'];
+            $csrf = $cookies->getCookieByName('csrftoken')?->getValue() ?? '';
+            if ($csrf === '') {
+                $client->get(self::WARMUP_URL);
+                $csrf = $cookies->getCookieByName('csrftoken')?->getValue() ?? '';
+            }
+
+            $response = $client->asForm()->withHeaders([
+                'Accept' => '*/*',
+                'X-IG-App-ID' => '936619743392459',
+                'X-CSRFToken' => $csrf,
+                'X-Requested-With' => 'XMLHttpRequest',
+                'Referer' => self::WARMUP_URL,
+            ])->post(self::SIGNUP_URL, [
+                'username' => $target,
+                'email' => '',
+                'first_name' => '',
+                'opt_into_one_tap' => 'false',
+            ]);
+
+            if (in_array($response->status(), [401, 403, 429], true)) {
+                return $this->result($target, $showUrl, 'Error', 'Instagram blocked/rate-limited the signup fallback (HTTP '.$response->status().')');
+            }
+            if ($response->status() !== 200) {
+                return $this->result($target, $showUrl, 'Error', 'Unexpected Instagram signup status: '.$response->status());
+            }
+
+            $data = $response->json();
+            $usernameErrors = data_get($data, 'errors.username');
+            if (is_array($usernameErrors)) {
+                foreach ($usernameErrors as $error) {
+                    $code = is_array($error) ? (string) ($error['code'] ?? '') : '';
+                    if (in_array($code, ['username_invalid', 'username_is_taken', 'username_invalid_substring'], true)) {
+                        return $this->result($target, $showUrl, 'Taken');
+                    }
+                    if (in_array($code, ['username_has_special_char', 'username_too_long'], true)) {
+                        return $this->result($target, $showUrl, 'Error', (string) ($error['message'] ?? 'Invalid username'));
+                    }
+                }
+            }
+
+            if (($data['status'] ?? null) === 'ok' && empty($usernameErrors)) {
+                return $this->result($target, $showUrl, 'Available');
+            }
+
+            return $this->result($target, $showUrl, 'Error', 'Instagram signup fallback gave no verdict');
+        } catch (\Throwable $e) {
+            return $this->result($target, $showUrl, 'Error', $e->getMessage());
+        }
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    protected function parseConnectorResponse(Response $response, string $target): array
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
-            return [];
+        return ['Error', 'Instagram uses a multi-step session flow'];
+    }
+
+    /** @return array<string, mixed>|null */
+    private function profileMetadata(Response $response, string $target): ?array
+    {
+        if ($response->status() !== 200) {
+            return null;
         }
 
-        $user = data_get($response->json(), 'data.user');
-        if (!is_array($user)) {
-            return [];
+        $html = $response->body();
+        $title = $this->meta($html, 'og:title');
+        if ($title === null || ! str_contains(strtolower($title), '(@'.strtolower($target).')')) {
+            return null;
         }
 
         $metadata = [
-            'username' => trim((string) ($user['username'] ?? '')) ?: $target,
-            'sources' => ['api_json'],
+            'username' => $target,
+            'sources' => ['profile_html'],
         ];
-
-        $fullName = trim((string) ($user['full_name'] ?? ''));
-        if ($fullName !== '') {
-            $metadata['display_name'] = $fullName;
+        $displayName = trim((string) preg_replace('/\s*\(@[^)]+\).*$/u', '', $title));
+        if ($displayName !== '' && strcasecmp($displayName, $target) !== 0) {
+            $metadata['display_name'] = $displayName;
         }
 
-        if (isset($user['id'])) {
-            $metadata['instagram_id'] = trim((string) $user['id']);
+        $description = $this->meta($html, 'og:description');
+        if ($description !== null && preg_match('/([0-9.,]+[A-Za-z]?)\s*Followers,\s*([0-9.,]+[A-Za-z]?)\s*Following,\s*([0-9.,]+[A-Za-z]?)\s*Posts/i', $description, $stats) === 1) {
+            $metadata['followers'] = $stats[1];
+            $metadata['following'] = $stats[2];
+            $metadata['posts_count'] = $stats[3];
         }
 
-        $avatar = trim((string) ($user['profile_pic_url_hd'] ?? ''));
-        if ($avatar !== '') {
+        $avatar = $this->meta($html, 'og:image');
+        if ($avatar !== null && ! str_contains($avatar, 'static.cdninstagram.com/rsrc.php')) {
             $metadata['avatar_url'] = $avatar;
         }
 
-        $bio = trim((string) ($user['biography'] ?? ''));
-        if ($bio !== '') {
-            $metadata['bio'] = $bio;
-        }
+        if (preg_match_all('/<script[^>]+type="application\/json"[^>]*>(.*?)<\/script>/is', $html, $scripts) > 0) {
+            foreach ($scripts[1] as $script) {
+                if (! str_contains($script, 'xig_user_by_username')) {
+                    continue;
+                }
 
-        $businessEmail = trim((string) ($user['business_email'] ?? ''));
-        if ($businessEmail !== '') {
-            $metadata['public_email'] = $businessEmail;
-        }
+                $decoded = json_decode(html_entity_decode($script, ENT_QUOTES | ENT_HTML5), true);
+                $user = is_array($decoded) ? $this->findNestedKey($decoded, 'xig_user_by_username') : null;
+                if (! is_array($user)) {
+                    continue;
+                }
 
-        $externalUrl = trim((string) ($user['external_url'] ?? ''));
-        if ($externalUrl !== '') {
-            $metadata['website_url'] = $externalUrl;
-            $metadata['external_links'] = [$externalUrl];
-        }
+                $metadata['sources'][] = 'embedded_json';
+                foreach ([
+                    'pk' => 'instagram_id',
+                    'full_name' => 'display_name',
+                    'biography' => 'bio',
+                    'business_email' => 'public_email',
+                    'fbid' => 'facebook_uid',
+                ] as $source => $destination) {
+                    if (($user[$source] ?? null) !== null && $user[$source] !== '') {
+                        $metadata[$destination] = $user[$source];
+                    }
+                }
+                foreach ([
+                    'is_business_account' => 'is_business',
+                    'is_joined_recently' => 'is_joined_recently',
+                    'is_private' => 'is_private',
+                    'is_verified' => 'is_verified',
+                ] as $source => $destination) {
+                    if (array_key_exists($source, $user)) {
+                        $metadata[$destination] = (bool) $user[$source];
+                    }
+                }
+                if (! empty($user['profile_pic_url'])) {
+                    $metadata['avatar_url'] = (string) $user['profile_pic_url'];
+                }
+                if (is_numeric(data_get($user, 'edge_followed_by.count'))) {
+                    $metadata['followers'] = (int) data_get($user, 'edge_followed_by.count');
+                }
+                if (is_numeric(data_get($user, 'edge_follow.count'))) {
+                    $metadata['following'] = (int) data_get($user, 'edge_follow.count');
+                }
 
-        if (isset($user['fbid'])) {
-            $metadata['facebook_uid'] = trim((string) $user['fbid']);
-        }
-
-        foreach ([
-            'is_business_account' => 'is_business',
-            'is_joined_recently' => 'is_joined_recently',
-            'is_private' => 'is_private',
-            'is_verified' => 'is_verified',
-        ] as $sourceKey => $metadataKey) {
-            if (array_key_exists($sourceKey, $user)) {
-                $metadata[$metadataKey] = (bool) $user[$sourceKey];
+                $externalLinks = [];
+                if (! empty($user['external_url'])) {
+                    $externalLinks[] = (string) $user['external_url'];
+                    $metadata['website_url'] = (string) $user['external_url'];
+                }
+                foreach ((array) ($user['bio_links'] ?? []) as $link) {
+                    if (is_array($link) && is_string($link['url'] ?? null) && $link['url'] !== '') {
+                        $externalLinks[] = $link['url'];
+                    }
+                }
+                if ($externalLinks !== []) {
+                    $metadata['external_links'] = array_values(array_unique($externalLinks));
+                }
+                break;
             }
-        }
-
-        $followers = data_get($user, 'edge_followed_by.count');
-        if (is_numeric($followers)) {
-            $metadata['followers'] = (int) $followers;
-        }
-
-        $following = data_get($user, 'edge_follow.count');
-        if (is_numeric($following)) {
-            $metadata['following'] = (int) $following;
         }
 
         return $metadata;
     }
 
-    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    private function findNestedKey(array $data, string $key): mixed
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
-            return '';
+        if (array_key_exists($key, $data)) {
+            return $data[$key];
         }
 
-        $metadata = $this->buildStructuredMetadata($response, $target, $status);
-        $summary = [];
-
-        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
-            $summary['Name'] = $metadata['display_name'];
-        }
-        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
-            $summary['Bio'] = $metadata['bio'];
-        }
-        if (isset($metadata['followers'])) {
-            $summary['Followers'] = (string) $metadata['followers'];
-        }
-        if (isset($metadata['following'])) {
-            $summary['Following'] = (string) $metadata['following'];
-        }
-        if (is_string($metadata['website_url'] ?? null) && $metadata['website_url'] !== '') {
-            $summary['Website'] = $metadata['website_url'];
+        foreach ($data as $value) {
+            if (! is_array($value)) {
+                continue;
+            }
+            $found = $this->findNestedKey($value, $key);
+            if ($found !== null) {
+                return $found;
+            }
         }
 
-        return $this->metadataSummary($summary);
+        return null;
+    }
+
+    private function meta(string $html, string $property): ?string
+    {
+        if (preg_match('/property="'.preg_quote($property, '/').'" content="([^"]*)"/i', $html, $matches) !== 1) {
+            return null;
+        }
+
+        $value = trim(html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5));
+
+        return $value !== '' ? $value : null;
+    }
+
+    /** @param array<string, mixed> $metadata */
+    private function result(string $target, string $url, string $status, string $reason = '', array $metadata = []): ScanResult
+    {
+        return new ScanResult(
+            $target,
+            $this->category(),
+            $this->siteName(),
+            $url,
+            $status,
+            $reason,
+            mode: $this->mode(),
+            key: $this->key(),
+            profileUrl: $status === 'Taken' ? $url : null,
+            metadata: $metadata,
+        );
     }
 }

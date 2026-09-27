@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\Manual\User;
 
+use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
 
 final class VenmoValidator extends BaseGeneratedValidator
 {
@@ -36,7 +38,7 @@ final class VenmoValidator extends BaseGeneratedValidator
 
     public function publicProfileUrl(string $target): ?string
     {
-        return 'https://venmo.com/' . rawurlencode($target);
+        return 'https://venmo.com/'.rawurlencode($target);
     }
 
     protected function requestMethod(): string
@@ -46,7 +48,7 @@ final class VenmoValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return 'https://api.venmo.com/v1/users/' . rawurlencode($target);
+        return 'https://api.venmo.com/v1/users/'.rawurlencode($target);
     }
 
     protected function requestHeaders(): array
@@ -59,6 +61,16 @@ final class VenmoValidator extends BaseGeneratedValidator
     protected function timeoutSeconds(): int
     {
         return 10;
+    }
+
+    public function check(string $target, array $options = []): ScanResult
+    {
+        $apiResult = parent::check($target, $options);
+        if ($apiResult->status !== 'Error') {
+            return $apiResult;
+        }
+
+        return $this->checkPublicProfileFallback($target, $options, $apiResult->reason);
     }
 
     /**
@@ -98,7 +110,7 @@ final class VenmoValidator extends BaseGeneratedValidator
         }
 
         if ($status !== 200) {
-            return ['Error', 'Unexpected status: ' . $status];
+            return ['Error', 'Unexpected status: '.$status];
         }
 
         $user = $this->extractUserPayload($response, $target);
@@ -114,7 +126,7 @@ final class VenmoValidator extends BaseGeneratedValidator
      */
     protected function buildStructuredMetadata(Response $response, string $target, string $status): array
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
+        if (! in_array($status, ['Taken', 'Found'], true)) {
             return [];
         }
 
@@ -182,7 +194,7 @@ final class VenmoValidator extends BaseGeneratedValidator
 
     protected function buildExtraMetadata(Response $response, string $target, string $status): string
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
+        if (! in_array($status, ['Taken', 'Found'], true)) {
             return '';
         }
 
@@ -220,7 +232,7 @@ final class VenmoValidator extends BaseGeneratedValidator
     private function extractUserPayload(Response $response, string $target): ?array
     {
         $decoded = $response->json();
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             return null;
         }
 
@@ -250,7 +262,7 @@ final class VenmoValidator extends BaseGeneratedValidator
      */
     private function normalizeUserCandidate(mixed $candidate): ?array
     {
-        if (!is_array($candidate)) {
+        if (! is_array($candidate)) {
             return null;
         }
 
@@ -272,7 +284,7 @@ final class VenmoValidator extends BaseGeneratedValidator
     }
 
     /**
-     * @param array<string, mixed> $user
+     * @param  array<string, mixed>  $user
      */
     private function matchesTarget(array $user, string $target): bool
     {
@@ -285,7 +297,7 @@ final class VenmoValidator extends BaseGeneratedValidator
     }
 
     /**
-     * @param array<string, mixed> $candidate
+     * @param  array<string, mixed>  $candidate
      */
     private function looksLikeUserCandidate(array $candidate): bool
     {
@@ -309,7 +321,7 @@ final class VenmoValidator extends BaseGeneratedValidator
     }
 
     /**
-     * @param array<string, mixed> $user
+     * @param  array<string, mixed>  $user
      */
     private function displayName(array $user): ?string
     {
@@ -332,7 +344,7 @@ final class VenmoValidator extends BaseGeneratedValidator
 
     private function stringValue(mixed $value): ?string
     {
-        if (!is_scalar($value)) {
+        if (! is_scalar($value)) {
             return null;
         }
 
@@ -372,5 +384,139 @@ final class VenmoValidator extends BaseGeneratedValidator
         } catch (\Throwable) {
             return $string;
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $options
+     */
+    private function checkPublicProfileFallback(string $target, array $options, string $apiReason): ScanResult
+    {
+        $showUrl = $this->publicProfileUrl($target) ?? $this->siteUrl();
+        $url = 'https://account.venmo.com/u/'.rawurlencode($target);
+
+        try {
+            $request = Http::timeout(15)
+                ->withOptions([
+                    'allow_redirects' => true,
+                    'verify' => (bool) config('scanner.verify_ssl', false),
+                ])
+                ->withHeaders([
+                    'User-Agent' => (string) config('scanner.user_agent'),
+                    'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                ]);
+
+            if (! empty($options['proxy'])) {
+                $request = $request->withOptions(['proxy' => $options['proxy']]);
+            }
+
+            $response = $request->get($url);
+            $body = $response->body();
+            $ogTitle = $this->metaContent($body, 'property', 'og:title');
+            $ogUrl = $this->metaContent($body, 'property', 'og:url');
+            $robots = strtolower((string) $this->metaContent($body, 'name', 'robots'));
+
+            if ($response->status() === 200
+                && $ogTitle !== null
+                && $ogUrl !== null
+                && $this->venmoProfileIdentityMatches($ogTitle, $ogUrl, $target)) {
+                $metadata = [
+                    'username' => $target,
+                    'lookup_source' => 'public_profile_fallback',
+                    'sources' => ['profile_html'],
+                ];
+                $displayName = trim(explode('|', $ogTitle, 2)[0]);
+                if ($displayName !== '' && strcasecmp($displayName, $target) !== 0) {
+                    $metadata['display_name'] = $displayName;
+                }
+                $avatar = $this->metaContent($body, 'property', 'og:image');
+                if ($avatar !== null) {
+                    $metadata['avatar_url'] = $avatar;
+                }
+
+                return $this->fallbackResult($target, $showUrl, 'Taken', metadata: $metadata);
+            }
+
+            if ($response->status() === 404
+                && str_contains($robots, 'noindex')
+                && $this->pageTitle($body) === 'Venmo') {
+                return $this->fallbackResult($target, $showUrl, 'Available');
+            }
+
+            return $this->fallbackResult(
+                $target,
+                $showUrl,
+                'Error',
+                'Venmo API failed ('.$apiReason.'); public profile fallback returned no identity-bound verdict',
+            );
+        } catch (\Throwable $e) {
+            return $this->fallbackResult(
+                $target,
+                $showUrl,
+                'Error',
+                'Venmo API failed ('.$apiReason.'); public profile fallback failed: '.$e->getMessage(),
+            );
+        }
+    }
+
+    private function venmoProfileIdentityMatches(string $title, string $url, string $target): bool
+    {
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        $path = rawurldecode(trim((string) parse_url($url, PHP_URL_PATH), '/'));
+
+        return $host === 'account.venmo.com'
+            && strcasecmp($path, 'u/'.$target) === 0
+            && preg_match('/\|\s*@'.preg_quote($target, '/').'$/i', $title) === 1;
+    }
+
+    private function metaContent(string $html, string $attribute, string $expected): ?string
+    {
+        if (preg_match_all('/<meta\b[^>]*>/i', $html, $tags) < 1) {
+            return null;
+        }
+
+        foreach ($tags[0] as $tag) {
+            if (preg_match('/\b'.preg_quote($attribute, '/').'=["\']([^"\']*)["\']/i', $tag, $name) !== 1
+                || strcasecmp($name[1], $expected) !== 0
+                || preg_match('/\bcontent=["\']([^"\']*)["\']/i', $tag, $content) !== 1) {
+                continue;
+            }
+
+            $value = trim(html_entity_decode($content[1], ENT_QUOTES | ENT_HTML5));
+
+            return $value !== '' ? $value : null;
+        }
+
+        return null;
+    }
+
+    private function pageTitle(string $html): string
+    {
+        if (preg_match('/<title[^>]*>(.*?)<\/title>/is', $html, $matches) !== 1) {
+            return '';
+        }
+
+        return trim(html_entity_decode(strip_tags($matches[1]), ENT_QUOTES | ENT_HTML5));
+    }
+
+    /** @param array<string, mixed> $metadata */
+    private function fallbackResult(
+        string $target,
+        string $url,
+        string $status,
+        string $reason = '',
+        array $metadata = [],
+    ): ScanResult {
+        return new ScanResult(
+            $target,
+            $this->category(),
+            $this->siteName(),
+            $url,
+            $status,
+            $reason,
+            mode: $this->mode(),
+            key: $this->key(),
+            profileUrl: $status === 'Taken' ? $url : null,
+            metadata: $metadata,
+        );
     }
 }

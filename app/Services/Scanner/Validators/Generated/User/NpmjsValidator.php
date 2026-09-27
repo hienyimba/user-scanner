@@ -31,7 +31,7 @@ final class NpmjsValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://www.npmjs.com/~';
+        return 'https://www.npmjs.com/~{user}';
     }
 
     protected function requestMethod(): string
@@ -41,7 +41,7 @@ final class NpmjsValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://www.npmjs.com/~{$target}";
+        return 'https://registry.npmjs.org/-/v1/search';
     }
 
     protected function followRedirects(): bool
@@ -51,13 +51,22 @@ final class NpmjsValidator extends BaseGeneratedValidator
 
     protected function timeoutSeconds(): int
     {
-        return 5;
+        return 15;
     }
 
     protected function requestHeaders(): array
     {
         return [
-            // No connector-specific headers inferred.
+            'Accept' => 'application/json',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function requestQuery(string $target): array
+    {
+        return [
+            'text' => 'maintainer:'.$target,
+            'size' => 1,
         ];
     }
 
@@ -65,55 +74,77 @@ final class NpmjsValidator extends BaseGeneratedValidator
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
-        $body = strtolower($response->body());
+        $data = $response->json();
 
-        if ($blocked = $this->detectBlockedOrChallenged($response)) {
-            return $blocked;
+        if ($status !== 200 || ! is_array($data)) {
+            return ['Error', 'Unexpected npm registry response (HTTP '.$status.')'];
         }
 
-        $availableStatuses = [404];
-        $takenStatuses = [200];
-        $availableIndicators = [];
-        $takenIndicators = [];
+        $objects = is_array($data['objects'] ?? null) ? $data['objects'] : null;
+        if ($objects === null || ! is_numeric($data['total'] ?? null)) {
+            return ['Error', 'Malformed npm registry search response'];
+        }
 
-        if ($this->mode() === 'username') {
-            if (in_array($status, $availableStatuses, true)) {
-                return ['Available', ''];
+        if ((int) $data['total'] === 0 && $objects === []) {
+            return ['Available', ''];
+        }
+
+        if ($this->containsExactMaintainer($objects, $target)) {
+            return ['Taken', ''];
+        }
+
+        return ['Error', 'npm returned packages without confirming the requested maintainer'];
+    }
+
+    /** @return array<string, mixed> */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        $data = $response->json();
+        $objects = is_array($data['objects'] ?? null) ? $data['objects'] : [];
+        if ($status !== 'Taken' || ! $this->containsExactMaintainer($objects, $target)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'sources' => ['api_json'],
+            'packages_count' => (int) ($data['total'] ?? 0),
+        ];
+
+        $packageNames = [];
+        foreach ($objects as $object) {
+            $name = data_get($object, 'package.name');
+            if (is_string($name) && $name !== '') {
+                $packageNames[] = $name;
             }
-            if (in_array($status, $takenStatuses, true)) {
-                return ['Taken', ''];
-            }
-            foreach ($takenIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Taken', ''];
+        }
+        if ($packageNames !== []) {
+            $metadata['sample_packages'] = array_values(array_unique($packageNames));
+        }
+
+        return $metadata;
+    }
+
+    /** @param array<int, mixed> $objects */
+    private function containsExactMaintainer(array $objects, string $target): bool
+    {
+        foreach ($objects as $object) {
+            $package = is_array($object) && is_array($object['package'] ?? null)
+                ? $object['package']
+                : [];
+
+            foreach ((array) ($package['maintainers'] ?? []) as $maintainer) {
+                if (is_array($maintainer)
+                    && strcasecmp((string) ($maintainer['username'] ?? ''), $target) === 0) {
+                    return true;
                 }
             }
-            foreach ($availableIndicators as $needle) {
-                if ($needle !== '' && str_contains($body, $needle)) {
-                    return ['Available', ''];
-                }
-            }
 
-            return ['Error', $this->key() . ': indeterminate username response (HTTP ' . $status . ')'];
-        }
-
-        if (in_array($status, $takenStatuses, true)) {
-            return ['Registered', ''];
-        }
-        if (in_array($status, $availableStatuses, true)) {
-            return ['Not Registered', ''];
-        }
-        foreach ($takenIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Registered', ''];
-            }
-        }
-        foreach ($availableIndicators as $needle) {
-            if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Not Registered', ''];
+            if (strcasecmp((string) data_get($package, 'publisher.username', ''), $target) === 0) {
+                return true;
             }
         }
 
-        return ['Error', $this->key() . ': indeterminate email response (HTTP ' . $status . ')'];
+        return false;
     }
 }

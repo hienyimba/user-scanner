@@ -41,7 +41,7 @@ final class GithubValidator extends BaseGeneratedValidator
     public function check(string $target, array $options = []): ScanResult
     {
         $startedAt = microtime(true);
-        $cookieJar = new CookieJar();
+        $cookieJar = new CookieJar;
 
         try {
             $request = Http::timeout(10)
@@ -51,8 +51,55 @@ final class GithubValidator extends BaseGeneratedValidator
                     'verify' => (bool) config('scanner.verify_ssl', false),
                 ]);
 
-            if (!empty($options['proxy'])) {
+            if (! empty($options['proxy'])) {
                 $request = $request->withOptions(['proxy' => $options['proxy']]);
+            }
+
+            // A public-profile email match is sufficient to prove that the
+            // address is registered, and remains useful when /signup is behind
+            // GitHub's bot challenge. A miss is not proof of availability, so
+            // it must always fall through to the signup availability check.
+            $publicMatch = $this->findExactPublicEmailMatch($request, $target);
+            if ($publicMatch !== null) {
+                $githubData = $publicMatch['profile'];
+                $profileResponse = $publicMatch['response'];
+                $username = (string) $githubData['login'];
+                $profileUrl = $this->normalizeAbsoluteUrlValue(
+                    $githubData['html_url'] ?? null,
+                    'https://github.com',
+                ) ?? 'https://github.com/'.rawurlencode($username);
+                $metadata = array_replace(
+                    $this->extractGithubStyleProfileMetadata($githubData, $profileUrl, $username),
+                    [
+                        'username' => $username,
+                        'public_email' => $target,
+                        'account_exists' => true,
+                        'matched_by' => 'public profile email',
+                        'sources' => ['github_user_search', 'github_public_api'],
+                        'evidence_types' => ['exact_public_profile_email'],
+                    ],
+                );
+
+                $githubId = $githubData['id'] ?? null;
+                if (is_numeric($githubId)) {
+                    $metadata['user_id'] = (int) $githubId;
+                } elseif (is_scalar($githubId) && trim((string) $githubId) !== '') {
+                    $metadata['user_id'] = trim((string) $githubId);
+                }
+
+                return new ScanResult(
+                    $target,
+                    $this->category(),
+                    $this->siteName(),
+                    $this->siteUrl(),
+                    'Registered',
+                    '',
+                    mode: $this->mode(),
+                    key: $this->key(),
+                    profileUrl: $profileUrl,
+                    confidence: 0.99,
+                    metadata: $this->mergeRequestDiagnostics($metadata, $options, $profileResponse, $startedAt),
+                );
             }
 
             $signup = $request->withHeaders([
@@ -87,7 +134,8 @@ final class GithubValidator extends BaseGeneratedValidator
                 );
             }
 
-            if (!preg_match('/data-csrf="true"\s+value="([^"]+)"/', $signup->body(), $match)) {
+            $authenticityToken = $this->extractSignupAuthenticityToken($signup->body());
+            if ($authenticityToken === null) {
                 return new ScanResult(
                     $target,
                     $this->category(),
@@ -115,7 +163,7 @@ final class GithubValidator extends BaseGeneratedValidator
                 'accept-language' => 'en-US,en;q=0.9',
                 'priority' => 'u=1, i',
             ])->asForm()->post('https://github.com/email_validity_checks', [
-                'authenticity_token' => $match[1],
+                'authenticity_token' => $authenticityToken,
                 'value' => $target,
             ]);
 
@@ -148,14 +196,14 @@ final class GithubValidator extends BaseGeneratedValidator
                 );
             }
 
-            if (!str_contains($body, 'already associated with an account')) {
+            if (! str_contains($body, 'already associated with an account')) {
                 return new ScanResult(
                     $target,
                     $this->category(),
                     $this->siteName(),
                     $this->siteUrl(),
                     'Error',
-                    'Unexpected status code: ' . $response->status() . ', report this via GitHub issues',
+                    'Unexpected status code: '.$response->status().', report this via GitHub issues',
                     mode: $this->mode(),
                     key: $this->key(),
                     metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt),
@@ -186,7 +234,7 @@ final class GithubValidator extends BaseGeneratedValidator
                     if ($githubUsername !== null) {
                         $profileResponse = $request
                             ->withHeaders(['Accept' => 'application/vnd.github+json'])
-                            ->get('https://api.github.com/users/' . rawurlencode($githubUsername));
+                            ->get('https://api.github.com/users/'.rawurlencode($githubUsername));
 
                         if ($profileResponse->status() === 200 && is_array($profileResponse->json())) {
                             $githubData = $profileResponse->json();
@@ -243,7 +291,7 @@ final class GithubValidator extends BaseGeneratedValidator
                 $this->siteName(),
                 $this->siteUrl(),
                 'Error',
-                'unexpected exception: ' . $e->getMessage(),
+                'unexpected exception: '.$e->getMessage(),
                 mode: $this->mode(),
                 key: $this->key(),
                 metadata: $this->requestDiagnostics($options, null, $startedAt),
@@ -258,6 +306,80 @@ final class GithubValidator extends BaseGeneratedValidator
     }
 
     /**
+     * @return array{profile: array<string, mixed>, response: Response}|null
+     */
+    private function findExactPublicEmailMatch(PendingRequest $request, string $email): ?array
+    {
+        try {
+            $search = $request
+                ->withHeaders(['Accept' => 'application/vnd.github+json'])
+                ->get('https://api.github.com/search/users', [
+                    'q' => $email.' in:email',
+                    'per_page' => 5,
+                ]);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($search->status() !== 200) {
+            return null;
+        }
+
+        foreach ((array) ($search->json('items') ?? []) as $item) {
+            if (! is_array($item)) {
+                continue;
+            }
+
+            $login = $this->nonEmptyStringValue($item['login'] ?? null);
+            if ($login === null) {
+                continue;
+            }
+
+            try {
+                $profileResponse = $request
+                    ->withHeaders(['Accept' => 'application/vnd.github+json'])
+                    ->get('https://api.github.com/users/'.rawurlencode($login));
+            } catch (\Throwable) {
+                continue;
+            }
+            $profile = $profileResponse->json();
+
+            if (
+                $profileResponse->status() === 200
+                && is_array($profile)
+                && isset($profile['login'])
+                && strcasecmp(trim((string) ($profile['email'] ?? '')), trim($email)) === 0
+            ) {
+                return ['profile' => $profile, 'response' => $profileResponse];
+            }
+        }
+
+        return null;
+    }
+
+    private function extractSignupAuthenticityToken(string $html): ?string
+    {
+        if (preg_match(
+            '/<auto-check\b[^>]*\bsrc="\/email_validity_checks"[^>]*>[\s\S]*?<input\b(?=[^>]*\bdata-csrf="true")(?=[^>]*\bvalue="([^"]+)")[^>]*>/i',
+            $html,
+            $match,
+        ) === 1) {
+            return $match[1];
+        }
+
+        // Older markup and recorded fixtures omit the auto-check wrapper. It
+        // is still safe to accept the page when it exposes exactly one CSRF
+        // input; multiple tokens remain ambiguous and must not be guessed.
+        preg_match_all(
+            '/<input\b(?=[^>]*\bdata-csrf="true")(?=[^>]*\bvalue="([^"]+)")[^>]*>/i',
+            $html,
+            $matches,
+        );
+
+        return count($matches[1] ?? []) === 1 ? $matches[1][0] : null;
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     private function fetchGravatarEntry(PendingRequest $request, string $email): ?array
@@ -265,7 +387,7 @@ final class GithubValidator extends BaseGeneratedValidator
         $hash = md5(strtolower(trim($email)));
         $response = $request
             ->withHeaders(['Accept' => 'application/json'])
-            ->get('https://en.gravatar.com/' . $hash . '.json');
+            ->get('https://en.gravatar.com/'.$hash.'.json');
 
         if ($response->status() !== 200) {
             return null;
@@ -277,14 +399,14 @@ final class GithubValidator extends BaseGeneratedValidator
     }
 
     /**
-     * @param array<string, mixed> $entry
+     * @param  array<string, mixed>  $entry
      */
     private function extractGithubProfileUrl(array $entry): ?string
     {
         $links = [];
 
         foreach ((array) ($entry['accounts'] ?? []) as $account) {
-            if (!is_array($account)) {
+            if (! is_array($account)) {
                 continue;
             }
 
@@ -295,7 +417,7 @@ final class GithubValidator extends BaseGeneratedValidator
         }
 
         foreach ((array) ($entry['urls'] ?? []) as $urlEntry) {
-            if (!is_array($urlEntry)) {
+            if (! is_array($urlEntry)) {
                 continue;
             }
 
@@ -317,7 +439,7 @@ final class GithubValidator extends BaseGeneratedValidator
                 continue;
             }
 
-            return 'https://github.com/' . $path;
+            return 'https://github.com/'.$path;
         }
 
         return null;

@@ -31,27 +31,81 @@ final class Cups7Validator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://www.7cups.com/@';
+        return 'https://www.7cups.com/@{user}';
     }
 
     protected function requestUrl(string $target): string
     {
-        return "https://www.7cups.com/@{$target}";
+        return "https://www.7cups.com/apiv2/user/{$target}";
+    }
+
+    protected function requestHeaders(): array
+    {
+        return ['Accept' => 'application/json'];
     }
 
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        $body = $response->body();
-
-        if (str_contains($body, 'Profile - 7 Cups')) {
-            return ['Taken', ''];
-        }
-
-        if (str_contains($body, "The content you're attempting to access could not be")) {
+        if ($response->status() === 404) {
             return ['Available', ''];
         }
 
-        return ['Error', 'Unexpected response body, report it via GitHub issues.'];
+        if ($response->status() === 202 || trim((string) $response->header('x-amzn-waf-action')) !== '') {
+            return ['Error', 'AWS WAF challenge triggered'];
+        }
+
+        if ($response->status() !== 200) {
+            return ['Error', 'Unexpected response status: '.$response->status()];
+        }
+
+        $data = $response->json();
+        if (is_array($data) && ! empty($data['screenName'])) {
+            return ['Taken', ''];
+        }
+
+        return ['Error', '200 response with no profile data'];
+    }
+
+    /** @return array<string, mixed> */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        $data = $response->json();
+        if ($status !== 'Taken' || ! is_array($data)) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => (string) ($data['screenName'] ?? $target),
+            'sources' => ['api_json'],
+        ];
+
+        foreach ([
+            'bio' => 'bio',
+            'Country' => 'location',
+            'language' => 'language',
+            'listenerLevel' => 'level',
+            'memberLevel' => 'level',
+            'overallRating' => 'rating',
+            'lastActive' => 'last_active_at',
+        ] as $source => $destination) {
+            if (($data[$source] ?? null) !== null && $data[$source] !== '') {
+                $metadata[$destination] = is_string($data[$source])
+                    ? trim(strip_tags($data[$source]))
+                    : $data[$source];
+            }
+        }
+
+        $userId = $data['userID'] ?? $data['memID'] ?? $data['listID'] ?? null;
+        if ($userId !== null) {
+            $metadata['user_id'] = $userId;
+        }
+        if (! empty($data['imgURL'])) {
+            $metadata['avatar_url'] = str_starts_with((string) $data['imgURL'], 'http')
+                ? (string) $data['imgURL']
+                : 'https://www.7cups.com'.$data['imgURL'];
+        }
+
+        return $metadata;
     }
 }

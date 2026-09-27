@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace App\Services\Scanner\Validators\Generated\User;
 
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
-use DOMDocument;
-use DOMXPath;
 use Illuminate\Http\Client\Response;
 
 final class StackoverflowValidator extends BaseGeneratedValidator
@@ -38,121 +36,93 @@ final class StackoverflowValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://stackoverflow.com/users/filter?search={$target}";
+        return 'https://api.stackexchange.com/2.3/users';
+    }
+
+    protected function requestQuery(string $target): array
+    {
+        return [
+            'order' => 'desc',
+            'sort' => 'name',
+            'inname' => $target,
+            'site' => 'stackoverflow',
+        ];
+    }
+
+    protected function requestHeaders(): array
+    {
+        return ['Accept' => 'application/json'];
     }
 
     /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        $status = $response->status();
-        $body = $response->body();
-
-        if ($status === 200) {
-            if (str_contains($body, 'No users matched your search.')) {
-                return ['Available', ''];
-            }
-
-            if (str_contains($body, '>' . $target . '<')) {
-                return ['Taken', ''];
-            }
-
-            return ['Available', ''];
+        if ($response->status() !== 200) {
+            return ['Error', 'Unexpected Stack Exchange API status: '.$response->status()];
         }
 
-        return ['Error', 'Unexpected status code from Stack Overflow'];
+        $data = $response->json();
+        if (! is_array($data) || ! is_array($data['items'] ?? null)) {
+            return ['Error', 'Unexpected Stack Exchange API response'];
+        }
+
+        return $this->matchingUser($data['items'], $target) !== null
+            ? ['Taken', '']
+            : ['Available', ''];
+    }
+
+    /** @return array<string, mixed> */
+    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    {
+        $items = $response->json('items');
+        $user = is_array($items) ? $this->matchingUser($items, $target) : null;
+        if ($status !== 'Taken' || $user === null) {
+            return [];
+        }
+
+        $metadata = [
+            'username' => $target,
+            'display_name' => html_entity_decode((string) $user['display_name'], ENT_QUOTES | ENT_HTML5),
+            'sources' => ['stackexchange_api'],
+        ];
+
+        foreach ([
+            'user_id' => 'stackoverflow_user_id',
+            'location' => 'location',
+            'reputation' => 'reputation',
+            'profile_image' => 'avatar_url',
+            'creation_date' => 'created_at_unix',
+            'last_access_date' => 'last_active_at_unix',
+        ] as $source => $destination) {
+            if (($user[$source] ?? null) !== null && $user[$source] !== '') {
+                $metadata[$destination] = $user[$source];
+            }
+        }
+
+        if (! empty($user['link'])) {
+            $metadata['external_links'] = [(string) $user['link']];
+        }
+
+        return $metadata;
     }
 
     /**
-     * @return array<string, mixed>
+     * @param  array<int, mixed>  $items
+     * @return array<string, mixed>|null
      */
-    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    private function matchingUser(array $items, string $target): ?array
     {
-        if (!in_array($status, ['Taken', 'Found'], true) || $response->status() !== 200) {
-            return [];
-        }
-
-        $document = new DOMDocument();
-        libxml_use_internal_errors(true);
-        $loaded = $document->loadHTML($response->body());
-        libxml_clear_errors();
-        if ($loaded === false) {
-            return [];
-        }
-
-        $xpath = new DOMXPath($document);
-        $nodes = $xpath->query('//div[contains(@class, "user-info")]');
-        if ($nodes === false) {
-            return [];
-        }
-
-        foreach ($nodes as $node) {
-            $link = $xpath->query('.//a[contains(@href, "/users/")][1]', $node)?->item(0);
-            if ($link === null) {
+        foreach ($items as $item) {
+            if (! is_array($item)) {
                 continue;
             }
 
-            $href = trim((string) $link->attributes?->getNamedItem('href')?->nodeValue);
-            $name = trim((string) $link->textContent);
-            $slug = '';
-            if (preg_match('#/users/\d+/([^/?\#]+)#', $href, $matches) === 1) {
-                $slug = strtolower(trim($matches[1]));
+            $displayName = html_entity_decode((string) ($item['display_name'] ?? ''), ENT_QUOTES | ENT_HTML5);
+            if (strcasecmp(trim($displayName), $target) === 0) {
+                return $item;
             }
-
-            if ($slug !== strtolower($target) && strtolower($name) !== strtolower($target)) {
-                continue;
-            }
-
-            $metadata = [
-                'username' => $target,
-                'sources' => ['profile_html'],
-            ];
-
-            $locationNode = $xpath->query('.//*[contains(@class, "user-location")]', $node)?->item(0);
-            $location = trim((string) ($locationNode?->textContent ?? ''));
-            if ($location !== '') {
-                $metadata['location'] = preg_replace('/\s+/', ' ', $location) ?: $location;
-            }
-
-            $avatarNode = $xpath->query('.//img[1]', $node)?->item(0);
-            $avatar = trim((string) ($avatarNode?->attributes?->getNamedItem('src')?->nodeValue ?? ''));
-            if ($avatar !== '') {
-                if (str_starts_with($avatar, '//')) {
-                    $avatar = 'https:' . $avatar;
-                }
-                $metadata['avatar_url'] = str_replace('&amp;', '&', $avatar);
-            }
-
-            $repNode = $xpath->query('.//*[@title[contains(., "total reputation")]][1]', $node)?->item(0);
-            $repTitle = trim((string) ($repNode?->attributes?->getNamedItem('title')?->nodeValue ?? ''));
-            if ($repTitle !== '' && preg_match('/total reputation:\s*([^"]+)/i', $repTitle, $matches) === 1) {
-                $metadata['reputation'] = trim($matches[1]);
-            }
-
-            return $metadata;
         }
 
-        return [];
-    }
-
-    protected function buildExtraMetadata(Response $response, string $target, string $status): string
-    {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
-            return '';
-        }
-
-        $metadata = $this->buildStructuredMetadata($response, $target, $status);
-        $summary = [];
-
-        if (is_string($metadata['location'] ?? null) && $metadata['location'] !== '') {
-            $summary['Location'] = $metadata['location'];
-        }
-        if (is_string($metadata['reputation'] ?? null) && $metadata['reputation'] !== '') {
-            $summary['Reputation'] = $metadata['reputation'];
-        }
-        if (is_string($metadata['avatar_url'] ?? null) && $metadata['avatar_url'] !== '') {
-            $summary['Avatar'] = $metadata['avatar_url'];
-        }
-
-        return $this->metadataSummary($summary);
+        return null;
     }
 }

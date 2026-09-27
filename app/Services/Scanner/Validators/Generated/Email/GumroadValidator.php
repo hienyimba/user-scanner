@@ -6,6 +6,7 @@ namespace App\Services\Scanner\Validators\Generated\Email;
 
 use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
+use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
 
@@ -39,80 +40,71 @@ final class GumroadValidator extends BaseGeneratedValidator
     public function check(string $target, array $options = []): ScanResult
     {
         $showUrl = $this->siteUrl();
+        $signupUrl = 'https://gumroad.com/signup';
 
         try {
-            $client = Http::timeout(10)
+            $client = Http::timeout(15)
                 ->withOptions([
                     'allow_redirects' => true,
                     'verify' => (bool) config('scanner.verify_ssl', false),
+                    'cookies' => new CookieJar,
                 ]);
 
-            if (!empty($options['proxy'])) {
+            if (! empty($options['proxy'])) {
                 $client = $client->withOptions(['proxy' => $options['proxy']]);
             }
 
-            $headers1 = [
-                'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-                'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-                'Accept-Encoding' => 'identity',
-                'sec-ch-ua' => '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-                'sec-ch-ua-mobile' => '?0',
-                'sec-ch-ua-platform' => '"Linux"',
-                'upgrade-insecure-requests' => '1',
-                'referer' => 'https://www.google.com/',
-                'accept-language' => 'en-US,en;q=0.9',
-            ];
-            $res1 = $client->withHeaders($headers1)->get('https://gumroad.com/users/forgot_password/new');
-            $html = $res1->body();
+            $page = $client->withHeaders([
+                'User-Agent' => (string) config('scanner.user_agent'),
+                'Accept' => 'text/html,application/xhtml+xml',
+            ])->get($signupUrl);
 
-            $csrf = null;
-            foreach ([
-                '/authenticity_token&quot;:&quot;([^&]+)&quot;/',
-                '/name="csrf-token" content="([^"]+)"/',
-            ] as $pattern) {
-                if (preg_match($pattern, $html, $matches)) {
-                    $csrf = html_entity_decode($matches[1], ENT_QUOTES | ENT_HTML5);
-                    break;
-                }
+            if ($page->status() !== 200) {
+                return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'Unexpected Gumroad signup response: '.$page->status(), mode: $this->mode(), key: $this->key());
             }
 
-            if (!$csrf) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'Failed to extract CSRF token', mode: $this->mode(), key: $this->key());
+            if (preg_match('/<meta name="csrf-token" content="([^"]+)"/', $page->body(), $csrfMatch) !== 1
+                || (! str_contains($page->body(), 'Signup\/New')
+                    && ! str_contains($page->body(), 'Signup/New'))) {
+                return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'Could not read Gumroad signup form', mode: $this->mode(), key: $this->key());
             }
 
-            $headers2 = [
-                'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-                'Accept' => 'text/html, application/xhtml+xml',
-                'Accept-Encoding' => 'identity',
-                'Content-Type' => 'application/json',
-                'sec-ch-ua-platform' => '"Linux"',
-                'x-csrf-token' => $csrf,
-                'sec-ch-ua' => '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-                'x-inertia' => 'true',
-                'sec-ch-ua-mobile' => '?0',
-                'x-requested-with' => 'XMLHttpRequest',
-                'origin' => 'https://gumroad.com',
-                'sec-fetch-site' => 'same-origin',
-                'sec-fetch-mode' => 'cors',
-                'sec-fetch-dest' => 'empty',
-                'referer' => 'https://gumroad.com/users/forgot_password/new',
-                'accept-language' => 'en-US,en;q=0.9',
-                'priority' => 'u=1, i',
-            ];
             $response = $client
-                ->withHeaders($headers2)
-                ->withBody(json_encode(['user' => ['email' => $target]], JSON_UNESCAPED_SLASHES), 'application/json')
-                ->post('https://gumroad.com/users/forgot_password');
+                ->withHeaders([
+                    'Accept' => 'text/html, application/xhtml+xml',
+                    'Origin' => 'https://gumroad.com',
+                    'Referer' => $signupUrl,
+                    'X-CSRF-Token' => html_entity_decode($csrfMatch[1], ENT_QUOTES | ENT_HTML5),
+                    'X-Inertia' => 'true',
+                    'X-Requested-With' => 'XMLHttpRequest',
+                ])
+                ->post($signupUrl, [
+                    'user' => [
+                        'email' => $target,
+                        'password' => 'Q7~',
+                    ],
+                ]);
+
+            if ($response->status() !== 200) {
+                return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'Unexpected Gumroad signup response: '.$response->status(), mode: $this->mode(), key: $this->key());
+            }
 
             $data = $response->json();
-            $flash = (string) data_get($data, 'props.flash.message', '');
-            if (str_contains($flash, 'An account does not exist')) {
+            if (($data['component'] ?? null) !== 'Signup/New') {
+                return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'Unexpected Gumroad signup page', mode: $this->mode(), key: $this->key());
+            }
+
+            $message = data_get($data, 'props.flash.message');
+            if ($message === 'An account already exists with this email.') {
+                return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Registered', '', mode: $this->mode(), key: $this->key());
+            }
+            if ($message === 'Password is too short (minimum is 4 characters)') {
                 return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Not Registered', '', mode: $this->mode(), key: $this->key());
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Registered', '', mode: $this->mode(), key: $this->key());
+            return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'Unexpected Gumroad signup result', mode: $this->mode(), key: $this->key());
         } catch (\Throwable $e) {
-            return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'unexpected exception: ' . $e->getMessage(), mode: $this->mode(), key: $this->key());
+            return new ScanResult($target, $this->category(), $this->siteName(), $showUrl, 'Error', 'unexpected exception: '.$e->getMessage(), mode: $this->mode(), key: $this->key());
         }
     }
 

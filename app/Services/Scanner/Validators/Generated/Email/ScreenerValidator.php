@@ -13,18 +13,37 @@ use Illuminate\Support\Facades\Http;
 
 final class ScreenerValidator extends BaseGeneratedValidator
 {
-    public function key(): string { return 'screener'; }
-    public function category(): string { return 'other'; }
-    public function mode(): string { return 'email'; }
-    public function siteName(): string { return 'Screener'; }
-    public function siteUrl(): string { return 'https://www.screener.in'; }
+    public function key(): string
+    {
+        return 'screener';
+    }
+
+    public function category(): string
+    {
+        return 'other';
+    }
+
+    public function mode(): string
+    {
+        return 'email';
+    }
+
+    public function siteName(): string
+    {
+        return 'Screener';
+    }
+
+    public function siteUrl(): string
+    {
+        return 'https://www.screener.in';
+    }
 
     public function check(string $target, array $options = []): ScanResult
     {
-        $cookieJar = new CookieJar();
+        $cookieJar = new CookieJar;
 
         try {
-            $request = Http::timeout(6)->withOptions([
+            $request = Http::timeout(15)->withOptions([
                 'allow_redirects' => true,
                 'verify' => (bool) config('scanner.verify_ssl', false),
                 'cookies' => $cookieJar,
@@ -38,7 +57,7 @@ final class ScreenerValidator extends BaseGeneratedValidator
                 'Upgrade-Insecure-Requests' => '1',
             ]);
 
-            if (!empty($options['proxy'])) {
+            if (! empty($options['proxy'])) {
                 $request = $request->withOptions(['proxy' => $options['proxy']]);
             }
 
@@ -50,9 +69,9 @@ final class ScreenerValidator extends BaseGeneratedValidator
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Rate limited by Screener (429)', mode: $this->mode(), key: $this->key());
             }
             if ($init->status() !== 200) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'HTTP Error: ' . $init->status(), mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'HTTP Error: '.$init->status(), mode: $this->mode(), key: $this->key());
             }
-            if (!preg_match('/name="csrfmiddlewaretoken" value="([^"]+)"/', $init->body(), $csrf) || !preg_match('/name="token" value="([^"]+)"/', $init->body(), $token)) {
+            if (! preg_match('/name="csrfmiddlewaretoken" value="([^"]+)"/', $init->body(), $csrf) || ! preg_match('/name="token" value="([^"]+)"/', $init->body(), $token)) {
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected response body structure, report it via GitHub issues', mode: $this->mode(), key: $this->key());
             }
 
@@ -75,14 +94,14 @@ final class ScreenerValidator extends BaseGeneratedValidator
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Rate limited by Screener (429)', mode: $this->mode(), key: $this->key());
             }
             if ($response->status() !== 200) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'HTTP Error: ' . $response->status(), mode: $this->mode(), key: $this->key());
+                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'HTTP Error: '.$response->status(), mode: $this->mode(), key: $this->key());
             }
 
             $body = $response->body();
             if (str_contains($body, 'User account with this Email already exists')) {
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', mode: $this->mode(), key: $this->key());
             }
-            if (str_contains($body, '<ul class="errorlist"><li>This field is required.</li>')) {
+            if (preg_match('/<ul[^>]*\sclass="[^"]*\berrorlist\b[^"]*"[^>]*>\s*<li>\s*This field is required\.\s*<\/li>/i', $body) === 1) {
                 return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', mode: $this->mode(), key: $this->key());
             }
 

@@ -4,11 +4,19 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\User;
 
+use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
+use GuzzleHttp\Cookie\CookieJar;
+use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
 
 final class RedditValidator extends BaseGeneratedValidator
 {
+    private const BASE_URL = 'https://www.reddit.com';
+
+    private const AVAILABLE_URL = self::BASE_URL.'/api/username_available.json';
+
     public function key(): string
     {
         return 'reddit';
@@ -31,153 +39,153 @@ final class RedditValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://www.reddit.com/user/{user}';
+        return self::BASE_URL.'/user/{user}/';
     }
 
-    protected function requestUrl(string $target): string
+    public function check(string $target, array $options = []): ScanResult
     {
-        return "https://www.reddit.com/user/{$target}/about.json";
+        $showUrl = self::BASE_URL.'/user/'.rawurlencode($target);
+
+        try {
+            $client = Http::timeout(15)->withOptions([
+                'allow_redirects' => true,
+                'verify' => (bool) config('scanner.verify_ssl', false),
+                'cookies' => new CookieJar,
+            ])->withHeaders([
+                'User-Agent' => (string) config('scanner.user_agent'),
+                'Accept-Language' => 'en-US,en;q=0.9',
+            ]);
+            if (! empty($options['proxy'])) {
+                $client = $client->withOptions(['proxy' => $options['proxy']]);
+            }
+
+            $clearance = $client->get(self::BASE_URL.'/');
+            if (str_contains($clearance->body(), 'Prove your humanity')) {
+                $params = $this->challengeParams($clearance->body());
+                if ($params === null) {
+                    return $this->result($target, $showUrl, 'Error', 'Unsupported Reddit bot challenge');
+                }
+                $clearance = $client->get(self::BASE_URL.'/', $params);
+            }
+            if (in_array($clearance->status(), [401, 403, 429], true)) {
+                return $this->result($target, $showUrl, 'Error', 'Reddit blocked/rate-limited the clearance request (HTTP '.$clearance->status().')');
+            }
+
+            $available = $this->availabilityVerdict($client, $target);
+            if ($available === null) {
+                return $this->result($target, $showUrl, 'Error', 'Reddit availability check gave no verdict');
+            }
+            if ($available) {
+                return $this->result($target, $showUrl, 'Available');
+            }
+
+            $profile = $client->withHeaders(['Accept' => 'application/json'])->get(
+                self::BASE_URL.'/user/'.rawurlencode($target).'/about.json'
+            );
+            $metadata = $this->profileMetadata($profile, $target);
+
+            return $this->result($target, $showUrl, 'Taken', metadata: $metadata);
+        } catch (\Throwable $e) {
+            return $this->result($target, $showUrl, 'Error', $e->getMessage());
+        }
     }
 
-    protected function requestHeaders(): array
-    {
-        return [
-            'Accept' => 'application/json',
-        ];
-    }
-
-    /** @return array{0:string,1:string} */
     protected function parseConnectorResponse(Response $response, string $target): array
     {
-        $status = $response->status();
-        if ($status === 404) {
-            return ['Available', ''];
-        }
-
-        if ($status === 429) {
-            return ['Error', 'Rate limit exceeded'];
-        }
-
-        if ($status === 200) {
-            try {
-                $data = $response->json();
-            } catch (\Throwable) {
-                return ['Error', 'Malformed JSON response, report it on Github'];
-            }
-
-            if (($data['error'] ?? null) === 404 || ($data['message'] ?? null) === 'Not Found') {
-                return ['Available', ''];
-            }
-
-            if (($data['kind'] ?? null) === 't2' || array_key_exists('data', $data)) {
-                return ['Taken', ''];
-            }
-        }
-
-        return ['Error', 'HTTP ' . $status];
+        return ['Error', 'Reddit uses a multi-step clearance flow'];
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    protected function buildStructuredMetadata(Response $response, string $target, string $status): array
+    /** @return array<string, string>|null */
+    private function challengeParams(string $html): ?array
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
-            return [];
+        if (preg_match('/\(async e=>e\+e\)\("([0-9a-f]+)"\)/', $html, $seed) !== 1
+            || preg_match('/name="token" value="([0-9a-f]+)"/', $html, $token) !== 1) {
+            return null;
         }
 
-        $user = data_get($response->json(), 'data');
-        if (!is_array($user)) {
-            return [];
-        }
-
-        $username = trim((string) ($user['name'] ?? ''));
-        if ($username === '') {
-            $username = $target;
-        }
-
-        $subreddit = data_get($user, 'subreddit');
-        $metadata = [
-            'username' => $username,
-            'sources' => ['api_json'],
+        return [
+            'solution' => $seed[1].$seed[1],
+            'js_challenge' => '1',
+            'token' => $token[1],
+            'jsc_orig_r' => '',
         ];
+    }
 
-        $displayName = trim((string) data_get($subreddit, 'title', ''));
-        if ($displayName !== '') {
-            $metadata['display_name'] = $displayName;
-        }
+    private function availabilityVerdict(PendingRequest $client, string $target): ?bool
+    {
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            $response = $client->withHeaders(['Accept' => 'application/json'])->get(self::AVAILABLE_URL, ['user' => $target]);
+            if ($response->status() === 200) {
+                $decoded = json_decode($response->body(), true);
 
-        $avatarUrl = trim((string) ($user['icon_img'] ?? ($user['snoovatar_img'] ?? data_get($subreddit, 'icon_img', ''))));
-        if ($avatarUrl !== '') {
-            $metadata['avatar_url'] = $avatarUrl;
-        }
-
-        $bio = trim((string) data_get($subreddit, 'public_description', ''));
-        if ($bio === '') {
-            $bio = trim((string) data_get($subreddit, 'description', ''));
-        }
-        if ($bio !== '') {
-            $metadata['bio'] = $bio;
-        }
-
-        if (is_numeric(data_get($subreddit, 'subscribers'))) {
-            $metadata['followers'] = (int) data_get($subreddit, 'subscribers');
-        }
-
-        if (isset($user['created_utc']) && is_numeric($user['created_utc'])) {
-            try {
-                $metadata['created_at'] = (new \DateTimeImmutable('@' . (string) $user['created_utc']))
-                    ->setTimezone(new \DateTimeZone('UTC'))
-                    ->format(DATE_ATOM);
-            } catch (\Throwable) {
-                // Ignore invalid upstream timestamps.
+                return is_bool($decoded) ? $decoded : null;
+            }
+            if (trim($response->body()) !== '') {
+                return null;
             }
         }
 
+        return null;
+    }
+
+    /** @return array<string, mixed> */
+    private function profileMetadata(Response $response, string $target): array
+    {
+        if ($response->status() === 404) {
+            return ['username' => $target, 'status_detail' => 'deleted', 'sources' => ['availability_api']];
+        }
+        if ($response->status() !== 200 || ! is_array($response->json('data'))) {
+            return ['username' => $target, 'sources' => ['availability_api']];
+        }
+
+        $user = $response->json('data');
+        $metadata = [
+            'username' => (string) ($user['name'] ?? $target),
+            'status_detail' => ! empty($user['is_suspended']) ? 'suspended' : 'active',
+            'sources' => ['availability_api', 'api_json'],
+        ];
+
+        if (! empty($user['icon_img'])) {
+            $metadata['avatar_url'] = html_entity_decode((string) $user['icon_img'], ENT_QUOTES | ENT_HTML5);
+        }
+        if (! empty($user['created_utc']) && is_numeric($user['created_utc'])) {
+            $metadata['created_at'] = gmdate(DATE_ATOM, (int) $user['created_utc']);
+        }
+        if (! empty(data_get($user, 'subreddit.public_description'))) {
+            $metadata['bio'] = trim((string) data_get($user, 'subreddit.public_description'));
+        }
+        if (! empty(data_get($user, 'subreddit.title'))) {
+            $metadata['display_name'] = trim((string) data_get($user, 'subreddit.title'));
+        }
+        if (is_numeric(data_get($user, 'subreddit.subscribers'))) {
+            $metadata['followers'] = (int) data_get($user, 'subreddit.subscribers');
+        }
         if (array_key_exists('verified', $user)) {
             $metadata['is_verified'] = (bool) $user['verified'];
         }
-
-        foreach ([
-            'total_karma' => 'karma',
-            'link_karma' => 'link_karma',
-            'comment_karma' => 'comment_karma',
-            'awarder_karma' => 'awarder_karma',
-            'awardee_karma' => 'awardee_karma',
-        ] as $sourceKey => $metadataKey) {
-            if (isset($user[$sourceKey]) && is_numeric($user[$sourceKey])) {
-                $metadata[$metadataKey] = (int) $user[$sourceKey];
+        foreach (['total_karma' => 'karma', 'link_karma' => 'link_karma', 'comment_karma' => 'comment_karma'] as $source => $destination) {
+            if (is_numeric($user[$source] ?? null)) {
+                $metadata[$destination] = (int) $user[$source];
             }
         }
 
         return $metadata;
     }
 
-    protected function buildExtraMetadata(Response $response, string $target, string $status): string
+    /** @param array<string, mixed> $metadata */
+    private function result(string $target, string $url, string $status, string $reason = '', array $metadata = []): ScanResult
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
-            return '';
-        }
-
-        $metadata = $this->buildStructuredMetadata($response, $target, $status);
-        $summary = [];
-
-        if (is_string($metadata['display_name'] ?? null) && $metadata['display_name'] !== '') {
-            $summary['Name'] = $metadata['display_name'];
-        }
-        if (isset($metadata['followers'])) {
-            $summary['Followers'] = (string) $metadata['followers'];
-        }
-        if (isset($metadata['karma'])) {
-            $summary['Karma'] = (string) $metadata['karma'];
-        }
-        if (is_string($metadata['bio'] ?? null) && $metadata['bio'] !== '') {
-            $summary['Bio'] = $metadata['bio'];
-        }
-        if (is_string($metadata['created_at'] ?? null) && $metadata['created_at'] !== '') {
-            $summary['Created'] = $metadata['created_at'];
-        }
-
-        return $this->metadataSummary($summary);
+        return new ScanResult(
+            $target,
+            $this->category(),
+            $this->siteName(),
+            $url,
+            $status,
+            $reason,
+            mode: $this->mode(),
+            key: $this->key(),
+            profileUrl: $status === 'Taken' ? $url : null,
+            metadata: $metadata,
+        );
     }
 }

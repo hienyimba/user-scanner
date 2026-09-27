@@ -34,7 +34,7 @@ final class DailyDevValidator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://app.daily.dev';
+        return 'https://daily.dev/{user}';
     }
 
     protected function requestMethod(): string
@@ -44,7 +44,7 @@ final class DailyDevValidator extends BaseGeneratedValidator
 
     protected function requestUrl(string $target): string
     {
-        return "https://app.daily.dev/{$target}";
+        return "https://daily.dev/{$target}";
     }
 
     protected function followRedirects(): bool
@@ -59,7 +59,10 @@ final class DailyDevValidator extends BaseGeneratedValidator
 
     protected function requestHeaders(): array
     {
-        return [];
+        return [
+            'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language' => 'en-US,en;q=0.9',
+        ];
     }
 
     /** @return array{0:string,1:string} */
@@ -77,7 +80,7 @@ final class DailyDevValidator extends BaseGeneratedValidator
         }
 
         if ($status !== 200) {
-            return ['Error', 'daily_dev: unexpected response body (non-200 status ' . $status . ')'];
+            return ['Error', 'daily_dev: unexpected response body (non-200 status '.$status.')'];
         }
 
         if (preg_match('/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/s', $body, $matches) !== 1) {
@@ -85,17 +88,17 @@ final class DailyDevValidator extends BaseGeneratedValidator
         }
 
         $decoded = json_decode($matches[1], true);
-        if (!is_array($decoded)) {
+        if (! is_array($decoded)) {
             return ['Error', 'daily_dev: unexpected response body (malformed __NEXT_DATA__)'];
         }
 
         $pageProps = $decoded['props']['pageProps'] ?? null;
-        if (!is_array($pageProps)) {
+        if (! is_array($pageProps)) {
             return ['Error', 'daily_dev: unexpected response body (missing pageProps)'];
         }
 
         $userData = $pageProps['user'] ?? null;
-        if (is_array($userData) && !empty($userData['id']) && !empty($userData['name'])) {
+        if (is_array($userData) && ! empty($userData['id'])) {
             return ['Taken', ''];
         }
 
@@ -121,7 +124,7 @@ final class DailyDevValidator extends BaseGeneratedValidator
     protected function buildStructuredMetadata(Response $response, string $target, string $status): array
     {
         $fallback = parent::buildStructuredMetadata($response, $target, $status);
-        if (!in_array($status, ['Taken', 'Found'], true)) {
+        if (! in_array($status, ['Taken', 'Found'], true)) {
             return $fallback;
         }
 
@@ -129,6 +132,9 @@ final class DailyDevValidator extends BaseGeneratedValidator
         $userData = is_array($nextData['props']['pageProps']['user'] ?? null)
             ? $nextData['props']['pageProps']['user']
             : null;
+        $userStats = is_array($nextData['props']['pageProps']['userStats'] ?? null)
+            ? $nextData['props']['pageProps']['userStats']
+            : [];
 
         if ($userData === null) {
             return $fallback;
@@ -149,12 +155,29 @@ final class DailyDevValidator extends BaseGeneratedValidator
             $metadata['daily_dev_user_id'] = $userId;
         }
 
+        foreach ([
+            'bio' => 'bio',
+            'createdAt' => 'created_at',
+            'reputation' => 'reputation',
+        ] as $source => $destination) {
+            if (($userData[$source] ?? null) !== null && $userData[$source] !== '') {
+                $metadata[$destination] = $userData[$source];
+            }
+        }
+
+        if (is_numeric($userStats['numFollowers'] ?? null)) {
+            $metadata['followers'] = (int) $userStats['numFollowers'];
+        }
+        if (is_numeric($userStats['numFollowing'] ?? null)) {
+            $metadata['following'] = (int) $userStats['numFollowing'];
+        }
+
         return array_replace($fallback, $metadata);
     }
 
     protected function buildExtraMetadata(Response $response, string $target, string $status): string
     {
-        if (!in_array($status, ['Taken', 'Found'], true)) {
+        if (! in_array($status, ['Taken', 'Found'], true)) {
             return '';
         }
 
@@ -187,7 +210,7 @@ final class DailyDevValidator extends BaseGeneratedValidator
 
     private function cleanString(mixed $value): ?string
     {
-        if (!is_scalar($value)) {
+        if (! is_scalar($value)) {
             return null;
         }
 
@@ -197,8 +220,7 @@ final class DailyDevValidator extends BaseGeneratedValidator
     }
 
     /**
-     * @param mixed $existing
-     * @param array<int, string> $newSources
+     * @param  array<int, string>  $newSources
      * @return array<int, string>
      */
     private function mergeSources(mixed $existing, array $newSources): array
@@ -207,7 +229,7 @@ final class DailyDevValidator extends BaseGeneratedValidator
         $merged = [];
 
         foreach (array_merge($sources, $newSources) as $source) {
-            if (!is_string($source) || trim($source) === '') {
+            if (! is_string($source) || trim($source) === '') {
                 continue;
             }
 
