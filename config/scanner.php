@@ -1,5 +1,27 @@
 <?php
 
+use App\Services\Scanner\Validators\Generated\Manual\Email\BibleEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\DoordashEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\DropboxEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\FoursquareEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\GitlabEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\GmailEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\GravatarEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\LibravatarEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\OtterEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\PandoraEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\PlexEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\RipeEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\SamsclubEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\SmuleEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\TypeformEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\UnavatarEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\VscoEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\Email\WanderlogEmailValidator;
+use App\Services\Scanner\Validators\Generated\Manual\User\GithubValidator;
+use App\Services\Scanner\Validators\Generated\Manual\User\VenmoValidator;
+use App\Services\Scanner\Validators\Generated\Manual\User\XValidator;
+
 $structuredProxyPool = [
     [
         'label' => 'us-8030',
@@ -407,6 +429,39 @@ return [
             'ama',
             'buymeacoffee',
             'luarocks',
+            'uniscore',
+            'finch',
+            'slowly',
+            'heyjapan',
+            'bnrlanguages',
+            'bunpo',
+            'hellochinese',
+            'hanzii',
+            'programminghub',
+            'talkpal',
+            'memrise',
+            'duocards',
+            'speakly',
+            'linga',
+            'dragongroot',
+            'hoichoi',
+            'fantasia',
+            'couplejoy',
+            'asafeer',
+            'weverse',
+            'cambly',
+            'superlive',
+            'medium',
+            'cv_ee',
+            'cv_lv',
+            'cvkeskus',
+            'cvonline_lt',
+            'cvmarket_lv',
+            'cvmarket_lt',
+            'jobs_cz',
+            'pulser',
+            'hercul',
+            'payhip',
         ],
     ],
 
@@ -424,14 +479,14 @@ return [
             'patreon' => 'Status 403',
             'axonaut' => 'Request timeout',
             'boot_dev' => 'HTTP 404',
-            //'codepen' => 'Unexpected response: 403',
+            // 'codepen' => 'Unexpected response: 403',
             'replit' => '403 Forbidden',
             'letterboxd' => 'Unexpected response structure',
             'alison' => 'Alison signup now appears to be JS-shell / reCAPTCHA gated, so the old non-interactive email check flow is no longer parsable',
             'foxnews' => 'Fox legacy status endpoint returned found=false for a real account; the old non-interactive signal is no longer reliable',
             'nytimes' => 'NYT took too long to answer',
             'anydo' => 'Connection timed out! maybe region blocks',
-            //'deviantart' => 'Connection timed out! maybe region blocks',
+            // 'deviantart' => 'Connection timed out! maybe region blocks',
             'amazon' => 'CAPTCHA triggered (IP may be flagged)',
             'classmates' => 'Caught by WAF (403) during Handshake',
             'marca' => 'Request timeout',
@@ -439,7 +494,7 @@ return [
             'sexvid' => 'Notifies the target by forgot password email or similar',
             'leetcode' => 'Notifies the target by forgot password email or similar',
             'netflix' => 'Notifies the target by forgot password email or similar',
-            //'flipkart' => 'Notifies the target by forgot password email or similar',
+            // 'flipkart' => 'Notifies the target by forgot password email or similar',
             'instagram' => 'Notifies the target by forgot password email or similar',
             'polarsteps' => 'Notifies the target by forgot password email or similar',
             'walmart' => 'Walmart identity GraphQL now fails every lookup with SOMETHING_WENT_WRONG (server-side bot gating) on direct and proxied exits',
@@ -452,27 +507,27 @@ return [
 
     // Register pure Laravel validators here.
     'validators' => [
-        App\Services\Scanner\Validators\Generated\Manual\Email\BibleEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\DoordashEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\DropboxEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\FoursquareEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\GitlabEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\GmailEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\GravatarEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\LibravatarEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\OtterEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\PandoraEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\PlexEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\RipeEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\SamsclubEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\SmuleEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\TypeformEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\UnavatarEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\VscoEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\Email\WanderlogEmailValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\User\GithubValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\User\VenmoValidator::class,
-        App\Services\Scanner\Validators\Generated\Manual\User\XValidator::class,
+        BibleEmailValidator::class,
+        DoordashEmailValidator::class,
+        DropboxEmailValidator::class,
+        FoursquareEmailValidator::class,
+        GitlabEmailValidator::class,
+        GmailEmailValidator::class,
+        GravatarEmailValidator::class,
+        LibravatarEmailValidator::class,
+        OtterEmailValidator::class,
+        PandoraEmailValidator::class,
+        PlexEmailValidator::class,
+        RipeEmailValidator::class,
+        SamsclubEmailValidator::class,
+        SmuleEmailValidator::class,
+        TypeformEmailValidator::class,
+        UnavatarEmailValidator::class,
+        VscoEmailValidator::class,
+        WanderlogEmailValidator::class,
+        GithubValidator::class,
+        VenmoValidator::class,
+        XValidator::class,
     ],
 
 ];

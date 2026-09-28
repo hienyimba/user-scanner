@@ -22,7 +22,7 @@ final class MetadataCapabilityService
      */
     public function forModule(string $mode, string $platform): ?array
     {
-        return $this->loadInventory()[$mode . ':' . $platform] ?? null;
+        return $this->loadInventory()[$mode.':'.$platform] ?? null;
     }
 
     /**
@@ -52,10 +52,10 @@ final class MetadataCapabilityService
         $validatedLevel3Plus = 0;
         $validatedLevel4 = 0;
         foreach ($this->loadInventory() as $record) {
-            $levels['level_' . $record['level']]++;
+            $levels['level_'.$record['level']]++;
             if ($record['validated_level'] !== null) {
                 $validatedLevel = (int) $record['validated_level'];
-                $validatedLevels['level_' . $validatedLevel]++;
+                $validatedLevels['level_'.$validatedLevel]++;
             }
         }
 
@@ -105,7 +105,7 @@ final class MetadataCapabilityService
 
         foreach ($this->loadInventory() as $record) {
             $mode = (string) ($record['mode'] ?? '');
-            if (!isset($summary[$mode])) {
+            if (! isset($summary[$mode])) {
                 continue;
             }
 
@@ -218,17 +218,29 @@ final class MetadataCapabilityService
 
         $inventory = [];
         $validationBaselines = $this->validationBaselines();
-        $root = base_path('user-scanner-py-june-release/user_scanner');
-        foreach (['user_scan' => 'username', 'email_scan' => 'email'] as $directory => $mode) {
-            $base = $root . DIRECTORY_SEPARATOR . $directory;
-            if (!is_dir($base)) {
+        $septemberEmailRoot = base_path('user-scanner-py-sept-release/user_scanner');
+        $hasSeptemberEmailSource = is_dir($septemberEmailRoot.DIRECTORY_SEPARATOR.'email_scan');
+        $sources = [
+            ['root' => base_path('user-scanner-py-june-release/user_scanner'), 'directory' => 'user_scan', 'mode' => 'username'],
+            [
+                'root' => $hasSeptemberEmailSource ? $septemberEmailRoot : base_path('user-scanner-py-june-release/user_scanner'),
+                'directory' => 'email_scan',
+                'mode' => 'email',
+            ],
+        ];
+        foreach ($sources as $inventorySource) {
+            $root = $inventorySource['root'];
+            $directory = $inventorySource['directory'];
+            $mode = $inventorySource['mode'];
+            $base = $root.DIRECTORY_SEPARATOR.$directory;
+            if (! is_dir($base)) {
                 continue;
             }
 
             $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($base));
             /** @var \SplFileInfo $file */
             foreach ($iterator as $file) {
-                if (!$file->isFile() || $file->getExtension() !== 'py' || $file->getFilename() === '__init__.py') {
+                if (! $file->isFile() || $file->getExtension() !== 'py' || $file->getFilename() === '__init__.py') {
                     continue;
                 }
 
@@ -244,12 +256,15 @@ final class MetadataCapabilityService
 
                 $relative = str_replace('\\', '/', ltrim(str_replace($root, '', $path), '\\/'));
                 $platform = pathinfo($path, PATHINFO_FILENAME);
+                if ($mode === 'email' && ! $hasSeptemberEmailSource && $platform === 'render') {
+                    continue;
+                }
                 $category = basename(dirname($path));
 
                 [$level, $strategy, $notes] = $this->classify($source, $mode);
                 $validation = $validationBaselines[$mode][$platform] ?? null;
 
-                $inventory[$mode . ':' . $platform] = [
+                $inventory[$mode.':'.$platform] = [
                     'mode' => $mode,
                     'platform' => $platform,
                     'category' => $category,
@@ -265,17 +280,42 @@ final class MetadataCapabilityService
             }
         }
 
+        if (! $hasSeptemberEmailSource) {
+            foreach ((array) config('scanner_september_email.modules', []) as $definition) {
+                if (! is_array($definition) || ! is_string($definition['key'] ?? null)) {
+                    continue;
+                }
+
+                $platform = $definition['key'];
+                [$level, $strategy, $notes] = $this->classifySeptemberDefinition($definition);
+                $validation = $validationBaselines['email'][$platform] ?? null;
+                $inventory['email:'.$platform] = [
+                    'mode' => 'email',
+                    'platform' => $platform,
+                    'category' => (string) ($definition['category'] ?? 'other'),
+                    'path' => (string) ($definition['source'] ?? 'config/scanner_september_email.php'),
+                    'level' => $level,
+                    'strategy' => $strategy,
+                    'notes' => $notes,
+                    'validated_level' => is_array($validation) && is_numeric($validation['validated_level'] ?? null) ? (int) $validation['validated_level'] : null,
+                    'validated_at' => is_array($validation) && is_string($validation['validated_at'] ?? null) ? $validation['validated_at'] : null,
+                    'validated_targets' => is_array($validation['targets'] ?? null) ? array_values(array_map('strval', $validation['targets'])) : [],
+                    'validated_notes' => is_array($validation) && is_string($validation['notes'] ?? null) ? $validation['notes'] : null,
+                ];
+            }
+        }
+
         foreach ($this->capabilityOverrides() as $mode => $records) {
-            if (!is_array($records)) {
+            if (! is_array($records)) {
                 continue;
             }
 
             foreach ($records as $platform => $override) {
-                if (!is_array($override)) {
+                if (! is_array($override)) {
                     continue;
                 }
 
-                $key = $mode . ':' . $platform;
+                $key = $mode.':'.$platform;
                 $existing = $inventory[$key] ?? null;
                 $validation = $validationBaselines[$mode][$platform] ?? null;
 
@@ -315,7 +355,7 @@ final class MetadataCapabilityService
     private function validationBaselines(): array
     {
         $path = base_path('config/scanner_metadata_validations.php');
-        if (!is_file($path)) {
+        if (! is_file($path)) {
             return [];
         }
 
@@ -330,7 +370,7 @@ final class MetadataCapabilityService
     private function capabilityOverrides(): array
     {
         $path = base_path('config/scanner_metadata_capability_overrides.php');
-        if (!is_file($path)) {
+        if (! is_file($path)) {
             return [];
         }
 
@@ -345,7 +385,7 @@ final class MetadataCapabilityService
     private function baselineRegistry(): array
     {
         $path = base_path('config/scanner_metadata_targets.php');
-        if (!is_file($path)) {
+        if (! is_file($path)) {
             return [];
         }
 
@@ -407,6 +447,35 @@ final class MetadataCapabilityService
         }
 
         return [1, 'found-not-found-only', 'Only registration detection was detected'];
+    }
+
+    /**
+     * @param  array<string, mixed>  $definition
+     * @return array{0:int,1:string,2:string}
+     */
+    private function classifySeptemberDefinition(array $definition): array
+    {
+        $metadataKeys = [];
+        foreach ((array) ($definition['rules'] ?? []) as $rule) {
+            if (! is_array($rule)) {
+                continue;
+            }
+            $metadataKeys = array_merge(
+                $metadataKeys,
+                array_keys((array) ($rule['metadata'] ?? [])),
+                array_keys((array) ($rule['metadata_from_json'] ?? [])),
+            );
+        }
+        $metadataKeys = array_values(array_unique(array_map('strval', $metadataKeys)));
+
+        if (count($metadataKeys) >= 2) {
+            return [4, 'account-evidence-enrichment', 'Declarative September validator returns structured account metadata and request evidence'];
+        }
+        if ($metadataKeys !== []) {
+            return [3, 'direct-extra-normalization', 'Declarative September validator returns structured account metadata'];
+        }
+
+        return [1, 'found-not-found-only', 'Declarative September validator provides strict registration detection'];
     }
 
     /**

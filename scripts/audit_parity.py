@@ -2,13 +2,56 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PY_ROOT = ROOT / 'user-scanner-py-june-release' / 'user_scanner'
+JUNE_ROOT = ROOT / 'user-scanner-py-june-release' / 'user_scanner'
+SEPTEMBER_ROOT = ROOT / 'user-scanner-py-sept-release' / 'user_scanner'
 PHP_ROOT = ROOT / 'app' / 'Services' / 'Scanner' / 'Validators' / 'Generated'
+VALIDATOR_ROOT = ROOT / 'app' / 'Services' / 'Scanner' / 'Validators'
+SEPTEMBER_CONFIG = ROOT / 'config' / 'scanner_september_email.php'
 
-from generate_validators import MANUAL_EMAIL_KEYS, MANUAL_USER_KEYS, discover_specs, sync_manual_sets  # type: ignore
+from generate_validators import MANUAL_EMAIL_KEYS, MANUAL_USER_KEYS, build_spec, sync_manual_sets  # type: ignore
+
+
+def discover_specs():
+    specs = []
+    sources = (
+        (JUNE_ROOT / 'user_scan', 'username'),
+        (SEPTEMBER_ROOT / 'email_scan', 'email'),
+    )
+    for base, mode in sources:
+        for category_dir in sorted(base.iterdir()):
+            if not category_dir.is_dir() or category_dir.name.startswith('__') or category_dir.name.lower() == 'abandoned':
+                continue
+            for py_file in sorted(category_dir.glob('*.py')):
+                if py_file.name != '__init__.py':
+                    specs.append(build_spec(py_file, mode, category_dir.name.lower()))
+    return specs
+
+
+def registered_runtime_keys(mode: str) -> dict[str, Path]:
+    mode_dir = 'User' if mode == 'username' else 'Email'
+    candidates = [
+        VALIDATOR_ROOT / mode_dir,
+        VALIDATOR_ROOT / 'Generated' / mode_dir,
+        VALIDATOR_ROOT / 'Generated' / 'Manual' / mode_dir,
+    ]
+    found: dict[str, Path] = {}
+    for base in candidates:
+        if not base.is_dir():
+            continue
+        for path in base.glob('*Validator.php'):
+            match = re.search(r"function\s+key\(\):\s*string\s*\{\s*return\s+'([^']+)'", path.read_text(encoding='utf-8'), re.S)
+            if match:
+                found[match.group(1)] = path
+
+    if mode == 'email' and SEPTEMBER_CONFIG.is_file():
+        for key in re.findall(r"'key'\s*=>\s*'([^']+)'", SEPTEMBER_CONFIG.read_text(encoding='utf-8')):
+            found.setdefault(key, SEPTEMBER_CONFIG)
+
+    return found
 
 
 def php_path_for(spec) -> Path:
@@ -16,7 +59,11 @@ def php_path_for(spec) -> Path:
     return PHP_ROOT / mode_dir / f'{spec.class_name}.php'
 
 
-def parity_class(spec, php_exists: bool) -> str:
+def parity_class(spec, php_path: Path | None) -> str:
+    if php_path is None:
+        return 'missing'
+    if php_path == SEPTEMBER_CONFIG:
+        return 'september-declarative'
     manual = MANUAL_USER_KEYS if spec.mode == 'username' else MANUAL_EMAIL_KEYS
     if spec.key in manual:
         return 'manual-user' if spec.mode == 'username' else 'manual-email'
@@ -28,7 +75,7 @@ def parity_class(spec, php_exists: bool) -> str:
         return 'needs-multi-step' if spec.complexity == 'manual' else 'generator-shaped'
     if spec.rules and any(any('status' in cond and '$body' in cond for cond in rule.conditions) for rule in spec.rules):
         return 'needs-body-order-fix'
-    return 'exact' if php_exists else 'generator-shaped'
+    return 'exact'
 
 
 def main() -> None:
@@ -38,16 +85,20 @@ def main() -> None:
 
     specs = discover_specs()
     sync_manual_sets(specs)
+    runtime_keys = {
+        'username': registered_runtime_keys('username'),
+        'email': registered_runtime_keys('email'),
+    }
     report = []
     for spec in specs:
-        php_path = php_path_for(spec)
+        php_path = runtime_keys[spec.mode].get(spec.key)
         report.append({
             'mode': spec.mode,
             'category': spec.category,
             'key': spec.key,
             'python_path': str(spec.python_path),
-            'php_path': str(php_path),
-            'parity_class': parity_class(spec, php_path.exists()),
+            'php_path': str(php_path) if php_path is not None else str(php_path_for(spec)),
+            'parity_class': parity_class(spec, php_path),
             'traits': {
                 'request_method': spec.request_method,
                 'url_pattern': spec.request_url,
@@ -67,6 +118,8 @@ def main() -> None:
         'exact': sum(1 for row in report if row['parity_class'] == 'exact'),
         'manual_user': sum(1 for row in report if row['parity_class'] == 'manual-user'),
         'manual_email': sum(1 for row in report if row['parity_class'] == 'manual-email'),
+        'september_declarative': sum(1 for row in report if row['parity_class'] == 'september-declarative'),
+        'missing': sum(1 for row in report if row['parity_class'] == 'missing'),
         'report': report,
     }
     rendered = json.dumps(output, indent=2)

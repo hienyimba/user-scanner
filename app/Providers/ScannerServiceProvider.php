@@ -7,13 +7,14 @@ namespace App\Providers;
 use App\Contracts\ValidatorContract;
 use App\Services\Scanner\MetadataAuditService;
 use App\Services\Scanner\MetadataBaselineValidationService;
-use App\Services\Scanner\MetadataEnrichmentService;
 use App\Services\Scanner\MetadataCapabilityService;
+use App\Services\Scanner\MetadataEnrichmentService;
 use App\Services\Scanner\ModuleSkipService;
 use App\Services\Scanner\PatternExpanderService;
 use App\Services\Scanner\ProfileMetadataExtractor;
 use App\Services\Scanner\ProxyManagerService;
 use App\Services\Scanner\ScannerEngineService;
+use App\Services\Scanner\Validators\Generated\September\DeclarativeEmailValidator;
 use Illuminate\Support\ServiceProvider;
 
 final class ScannerServiceProvider extends ServiceProvider
@@ -35,15 +36,28 @@ final class ScannerServiceProvider extends ServiceProvider
             foreach (config('scanner.validators', []) as $class) {
                 /** @var ValidatorContract $validator */
                 $validator = $app->make($class);
-                $validators[$validator->mode() . ':' . $validator->key()] = $validator;
+                $validators[$validator->mode().':'.$validator->key()] = $validator;
             }
 
             foreach (config('scanner_generated.validators', []) as $class) {
                 /** @var ValidatorContract $validator */
                 $validator = $app->make($class);
-                $registryKey = $validator->mode() . ':' . $validator->key();
+                $registryKey = $validator->mode().':'.$validator->key();
 
-                if (!isset($validators[$registryKey])) {
+                if (! isset($validators[$registryKey])) {
+                    $validators[$registryKey] = $validator;
+                }
+            }
+
+            foreach (config('scanner_september_email.modules', []) as $definition) {
+                if (! is_array($definition)) {
+                    continue;
+                }
+
+                $validator = new DeclarativeEmailValidator($definition);
+                $registryKey = $validator->mode().':'.$validator->key();
+
+                if (! isset($validators[$registryKey])) {
                     $validators[$registryKey] = $validator;
                 }
             }

@@ -31,7 +31,7 @@ This Laravel scanner MVP now supports:
 
 ## Metadata readiness
 - Normalized scanner results are exported with stable `status`, `profile_url`, `metadata`, `evidence`, and `confidence` fields.
-- `php artisan scanner:metadata-readiness --json` reports documented June-inventory capability separately from live-validated capability counts.
+- `php artisan scanner:metadata-readiness --json` reports documented June username / September email inventory capability separately from live-validated capability counts.
 - `php artisan scanner:metadata-audit ...` verifies observed module output against the documented capability level.
 - `php artisan scanner:metadata-validate-baselines ...` converts successful live audits into the validation overlay used by the readiness report.
 - `docs/metadata_acceptance_audit.md` maps the WebVetted requirements to current evidence and calls out any remaining ambiguity.

@@ -4,7 +4,7 @@ This document maps the WebVetted-facing metadata requirements to current evidenc
 
 ## Evidence model
 
-- Documented capability: inferred from the June Python source inventory in `user-scanner-py-june-release/user_scanner`
+- Documented capability: inferred from the June username inventory and September email inventory in the bundled Python releases
 - Validated capability: proven by successful live proxy-backed audits recorded in `config/scanner_metadata_validations.php`
 - Normalized contract: proven by PHPUnit coverage over `ScanResult`, API responses, and stored-result rehydration
 - Overlay stability: monitored by revalidation audits against stored validated targets
@@ -13,12 +13,12 @@ This document maps the WebVetted-facing metadata requirements to current evidenc
 
 From `php artisan scanner:metadata-readiness --json` in the current checkout:
 
-- Documented modules: `293`
-- Documented Level 3+: `189`
-- Documented Level 4: `185`
-- Validated modules: `113`
-- Validated Level 3+: `112`
-- Validated Level 4: `100`
+- Documented modules: `414`
+- Documented Level 3+: `227`
+- Documented Level 4: `209`
+- Validated modules: `120`
+- Validated Level 3+: `119`
+- Validated Level 4: `105`
 
 For a machine-readable version of this audit, run:
 
@@ -99,7 +99,7 @@ Primary evidence:
 
 Current value:
 
-- `293` documented modules
+- `414` documented modules
 
 ### At least 150 modules return Level 3+ metadata for successful public username/profile checks
 
@@ -114,7 +114,7 @@ Primary evidence for documented capability:
 
 Current documented value:
 
-- `189` modules classified at documented Level 3+
+- `227` modules classified at documented Level 3+
 
 Primary evidence for live-validated capability:
 
@@ -123,7 +123,7 @@ Primary evidence for live-validated capability:
 
 Current live-validated value:
 
-- `112` modules validated at Level 3+
+- `119` modules validated at Level 3+
 
 Interpretation note:
 
@@ -144,7 +144,7 @@ Primary evidence:
 
 Current live-validated value:
 
-- `100` modules validated at Level 4
+- `105` modules validated at Level 4
 
 ### Metadata capability is classified systematically
 
@@ -159,8 +159,8 @@ Primary evidence:
 
 What is proved:
 
-- every active June module is inventoried
-- each active June module is assigned a documented capability level
+- every active June username and September email module is inventoried
+- each active release module is assigned a documented capability level
 - validated overlays are merged into the same inventory model
 - validated overlays can be re-audited against their stored targets to detect drift
 
@@ -169,7 +169,7 @@ What is proved:
 The repository now has:
 
 - a stable normalized metadata contract
-- source-derived documented capability inventory across active June modules
+- source-derived documented capability inventory across active June username and September email modules
 - explicit live-validated capability overlays
 - readiness gates for documented Level 3+/4 and validated Level 3+/4
 - enough live validation to prove the Level 4 acceptance threshold

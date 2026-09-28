@@ -46,11 +46,11 @@ return [
             'notes' => 'Private Laravel validator is intentionally skipped until phone or social recovery hints can be gathered without notification or recovery side effects.',
         ],
         'dropbox' => [
-            'level' => 0,
+            'level' => 4,
             'category' => 'hosting',
-            'path' => 'app/Services/Scanner/Validators/Email/DropboxEmailValidator.php',
-            'strategy' => 'safety-blocked-placeholder',
-            'notes' => 'Private Laravel validator is intentionally skipped until passkey hints can be gathered safely from an unauthenticated flow.',
+            'path' => 'app/Services/Scanner/Validators/Generated/Manual/Email/DropboxEmailValidator.php',
+            'strategy' => 'laravel-csrf-account-enrichment',
+            'notes' => 'Laravel validator bootstraps Dropbox\'s public CSRF session and returns exact account, recovery-email, and passkey evidence without triggering a recovery flow.',
         ],
         'duolingo' => [
             'level' => 4,

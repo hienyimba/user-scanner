@@ -27,7 +27,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
 
         $requestUrl = $this->requestUrl($target);
-        if (!$this->looksLikePublicProfileUrl($requestUrl, $target)) {
+        if (! $this->looksLikePublicProfileUrl($requestUrl, $target)) {
             return null;
         }
 
@@ -35,13 +35,13 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $query
+     * @param  array<string, mixed>  $query
      * @return array{0:string,1:array<string, mixed>}
      */
     protected function normalizeUrlAndQuery(string $url, array $query): array
     {
         $parts = parse_url($url);
-        if ($parts === false || !isset($parts['query'])) {
+        if ($parts === false || ! isset($parts['query'])) {
             return [$url, $query];
         }
 
@@ -140,13 +140,11 @@ abstract class BaseGeneratedValidator implements ValidatorContract
                 'verify' => (bool) config('scanner.verify_ssl', false),
             ])
             ->withHeaders(array_merge([
-            'User-Agent' => config('scanner.user_agent'),
-            'Accept' => 'text/html,application/json,*/*;q=0.8',
-        ], $this->requestHeadersForTarget($target)));
+                'User-Agent' => config('scanner.user_agent'),
+                'Accept' => 'text/html,application/json,*/*;q=0.8',
+            ], $this->requestHeadersForTarget($target)));
 
-
-
-        if (!empty($options['proxy']) && $this->usesProxy()) {
+        if (! empty($options['proxy']) && $this->usesProxy()) {
             $request = $request->withOptions(['proxy' => $options['proxy']]);
         }
 
@@ -241,7 +239,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
                 // value between 1xx and 5xx" error). Keep this retryable so the
                 // proxy rotation policy re-attempts on a fresh exit.
                 str_contains($message, 'status code must be an integer value between 1xx and 5xx'),
-                str_contains($message, 'an error was encountered while creating the response') => $this->key() . ': rate limited (upstream returned a nonstandard HTTP status)',
+                str_contains($message, 'an error was encountered while creating the response') => $this->key().': rate limited (upstream returned a nonstandard HTTP status)',
                 default => $e->getMessage(),
             };
 
@@ -260,8 +258,8 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $metadata
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $metadata
+     * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
     protected function mergeRequestDiagnostics(array $metadata, array $options = [], ?Response $response = null, ?float $startedAt = null): array
@@ -270,7 +268,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
     protected function requestDiagnostics(array $options = [], ?Response $response = null, ?float $startedAt = null): array
@@ -315,7 +313,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     {
         $status = $response->status();
         if (in_array($status, [401, 403, 429], true)) {
-            return ['Error', $this->key() . ': blocked/rate-limited (HTTP ' . $status . ')'];
+            return ['Error', $this->key().': blocked/rate-limited (HTTP '.$status.')'];
         }
 
         if ($status === 404) {
@@ -324,14 +322,19 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
         $effectiveUri = strtolower((string) ($response->effectiveUri() ?? ''));
         if ($effectiveUri !== '' && (str_contains($effectiveUri, '/verify-human/') || str_contains($effectiveUri, 'captcha'))) {
-            return ['Error', $this->key() . ': anti-bot challenge detected'];
+            return ['Error', $this->key().': anti-bot challenge detected'];
         }
 
-        if (!$this->looksLikeHtml($response)) {
+        if (! $this->looksLikeHtml($response)) {
             return null;
         }
 
         $body = strtolower($response->body());
+        if (str_contains($body, 'requiring us to verify your age')
+            || (str_contains($body, 'elected officials') && str_contains($body, 'age verification'))) {
+            return ['Error', $this->key().': blocked by regional age-verification wall'];
+        }
+
         foreach ([
             'verify you are human',
             'bot check',
@@ -341,7 +344,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             'access denied',
         ] as $needle) {
             if ($needle !== '' && str_contains($body, $needle)) {
-                return ['Error', $this->key() . ': anti-bot challenge detected'];
+                return ['Error', $this->key().': anti-bot challenge detected'];
             }
         }
 
@@ -350,7 +353,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
     protected function buildExtraMetadata(Response $response, string $target, string $status): string
     {
-        if (!in_array($status, ['Found', 'Registered'], true)) {
+        if (! in_array($status, ['Found', 'Registered'], true)) {
             return '';
         }
 
@@ -362,7 +365,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
      */
     protected function buildStructuredMetadata(Response $response, string $target, string $status): array
     {
-        if ($this->mode() !== 'username' || !in_array($status, ['Taken', 'Found'], true)) {
+        if ($this->mode() !== 'username' || ! in_array($status, ['Taken', 'Found'], true)) {
             if ($this->mode() === 'email' && in_array($status, ['Registered', 'Found'], true)) {
                 return $this->extractStructuredEmailMetadata($response, $target);
             }
@@ -380,7 +383,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             return $jsonMetadata;
         }
 
-        if (!$this->looksLikeHtml($response)) {
+        if (! $this->looksLikeHtml($response)) {
             return [];
         }
 
@@ -399,7 +402,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     protected function extractPositiveMetadata(Response $response, string $target, string $status): array
     {
         $data = $response->json();
-        if (!is_array($data)) {
+        if (! is_array($data)) {
             return [];
         }
 
@@ -422,7 +425,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             $providers = [];
             $accountTypes = [];
             foreach ($accountsData as $account) {
-                if (!is_array($account)) {
+                if (! is_array($account)) {
                     continue;
                 }
 
@@ -454,12 +457,12 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             $accountTypes = [];
 
             foreach ($data as $account) {
-                if (!is_array($account)) {
+                if (! is_array($account)) {
                     continue;
                 }
 
                 foreach ((array) ($account['authenticationMethods'] ?? []) as $method) {
-                    if (!is_array($method)) {
+                    if (! is_array($method)) {
                         continue;
                     }
 
@@ -500,7 +503,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
 
         if ($status !== 200) {
-            return ['Error', 'Unexpected response status: ' . $status];
+            return ['Error', 'Unexpected response status: '.$status];
         }
 
         $data = $response->json();
@@ -513,7 +516,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             return ['Available', ''];
         }
 
-        return ['Error', 'Unexpected response status: ' . $status];
+        return ['Error', 'Unexpected response status: '.$status];
     }
 
     /**
@@ -522,7 +525,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     protected function extractStructuredJsonMetadata(Response $response, string $profileUrl, string $target): array
     {
         $data = $response->json();
-        if (!is_array($data)) {
+        if (! is_array($data)) {
             return [];
         }
 
@@ -562,7 +565,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     protected function extractStructuredEmailMetadata(Response $response, string $target): array
     {
         $data = $response->json();
-        if (!is_array($data)) {
+        if (! is_array($data)) {
             return [];
         }
 
@@ -592,7 +595,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             $providers = [];
             $accountTypes = [];
             foreach ($accountsData as $account) {
-                if (!is_array($account)) {
+                if (! is_array($account)) {
                     continue;
                 }
 
@@ -627,12 +630,12 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             $accountTypes = [];
 
             foreach ($data as $account) {
-                if (!is_array($account)) {
+                if (! is_array($account)) {
                     continue;
                 }
 
                 foreach ((array) ($account['authenticationMethods'] ?? []) as $method) {
-                    if (!is_array($method)) {
+                    if (! is_array($method)) {
                         continue;
                     }
 
@@ -692,7 +695,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $user
+     * @param  array<string, mixed>  $user
      * @return array<string, mixed>
      */
     protected function extractDiscourseProfileMetadata(array $user, string $profileUrl, string $target): array
@@ -762,7 +765,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     protected function extractGithubStyleProfileMetadata(array $data, string $profileUrl, string $target): array
@@ -772,7 +775,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         $avatarUrl = $this->normalizeAbsoluteUrl($data['avatar_url'] ?? ($data['avatar'] ?? null), $profileUrl);
         $createdAt = $this->normalizeDateValue($data['created_at'] ?? ($data['created'] ?? null));
 
-        if ($username === null || ($avatarUrl === null && $createdAt === null && !array_key_exists('name', $data) && !array_key_exists('full_name', $data))) {
+        if ($username === null || ($avatarUrl === null && $createdAt === null && ! array_key_exists('name', $data) && ! array_key_exists('full_name', $data))) {
             return [];
         }
 
@@ -800,7 +803,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
         $twitterUsername = $this->nonEmptyString($data['twitter_username'] ?? null);
         if ($twitterUsername !== null) {
-            $externalLinks[] = 'https://x.com/' . ltrim($twitterUsername, '@');
+            $externalLinks[] = 'https://x.com/'.ltrim($twitterUsername, '@');
         }
         $externalLinks = array_values(array_unique($externalLinks));
 
@@ -866,12 +869,12 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     protected function extractDailymotionProfileMetadata(array $data, string $profileUrl, string $target): array
     {
-        if (!array_key_exists('username', $data) || !array_key_exists('screenname', $data)) {
+        if (! array_key_exists('username', $data) || ! array_key_exists('screenname', $data)) {
             return [];
         }
 
@@ -927,13 +930,13 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     protected function extractPx500ProfileMetadata(array $data, string $profileUrl, string $target): array
     {
         $user = data_get($data, 'data.userByUsername');
-        if (!is_array($user)) {
+        if (! is_array($user)) {
             return [];
         }
 
@@ -997,7 +1000,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $data
+     * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
     protected function extractCodewarsProfileMetadata(array $data, string $profileUrl, string $target): array
@@ -1006,7 +1009,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         $honor = $this->normalizeIntegerValue($data['honor'] ?? null);
         $leaderboardPosition = $this->normalizeIntegerValue($data['leaderboardPosition'] ?? null);
 
-        if ($username === null || ($honor === null && $leaderboardPosition === null && !is_array($data['codeChallenges'] ?? null))) {
+        if ($username === null || ($honor === null && $leaderboardPosition === null && ! is_array($data['codeChallenges'] ?? null))) {
             return [];
         }
 
@@ -1048,7 +1051,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $user
+     * @param  array<string, mixed>  $user
      * @return array<string, mixed>
      */
     protected function extractCratesProfileMetadata(array $user, string $profileUrl, string $target): array
@@ -1059,7 +1062,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         $websiteUrl = $this->normalizeAbsoluteUrl($user['url'] ?? null, $profileUrl);
         $createdAt = $this->normalizeDateValue($user['created_at'] ?? null);
 
-        if ($avatarUrl === null && $websiteUrl === null && $createdAt === null && !array_key_exists('name', $user)) {
+        if ($avatarUrl === null && $websiteUrl === null && $createdAt === null && ! array_key_exists('name', $user)) {
             return [];
         }
 
@@ -1090,7 +1093,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      */
     protected function metadataSummary(array $metadata): string
     {
@@ -1102,7 +1105,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
                 continue;
             }
 
-            $lines[] = $label . ': ' . $formatted;
+            $lines[] = $label.': '.$formatted;
         }
 
         return implode("\n", $lines);
@@ -1126,7 +1129,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     private function looksLikePublicProfileUrl(string $url, string $target): bool
     {
         $parsed = parse_url($url);
-        if (!is_array($parsed)) {
+        if (! is_array($parsed)) {
             return false;
         }
 
@@ -1135,7 +1138,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         $query = strtolower((string) ($parsed['query'] ?? ''));
         $targetLower = strtolower($target);
 
-        if (!str_contains($host, $targetLower) && !str_contains($path, $targetLower) && !str_contains($query, $targetLower)) {
+        if (! str_contains($host, $targetLower) && ! str_contains($path, $targetLower) && ! str_contains($query, $targetLower)) {
             return false;
         }
 
@@ -1187,7 +1190,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
     private function nonEmptyString(mixed $value): ?string
     {
-        if (!is_scalar($value)) {
+        if (! is_scalar($value)) {
             return null;
         }
 
@@ -1216,30 +1219,30 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         if (str_starts_with($url, '//')) {
             $scheme = parse_url($baseUrl, PHP_URL_SCHEME) ?: 'https';
 
-            return $scheme . ':' . $url;
+            return $scheme.':'.$url;
         }
 
         if (preg_match('#^https?://#i', $url) === 1) {
             return $url;
         }
 
-        if (!str_starts_with($url, '/')) {
+        if (! str_starts_with($url, '/')) {
             return $url;
         }
 
         $parts = parse_url($baseUrl);
-        if (!is_array($parts) || !isset($parts['scheme'], $parts['host'])) {
+        if (! is_array($parts) || ! isset($parts['scheme'], $parts['host'])) {
             return $url;
         }
 
-        return $parts['scheme'] . '://' . $parts['host'] . $url;
+        return $parts['scheme'].'://'.$parts['host'].$url;
     }
 
     private function normalizeDateValue(mixed $value): ?string
     {
         if (is_int($value) || (is_string($value) && ctype_digit($value))) {
             try {
-                return (new \DateTimeImmutable('@' . (string) $value))
+                return (new \DateTimeImmutable('@'.(string) $value))
                     ->setTimezone(new \DateTimeZone('UTC'))
                     ->format(\DateTimeInterface::ATOM);
             } catch (\Throwable) {
@@ -1295,7 +1298,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     private function normalizePublicEmail(mixed $value): ?string
     {
         $email = $this->nonEmptyString($value);
-        if ($email === null || !str_contains($email, '@')) {
+        if ($email === null || ! str_contains($email, '@')) {
             return null;
         }
 
@@ -1303,7 +1306,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
     }
 
     /**
-     * @param array<int, string|null> $parts
+     * @param  array<int, string|null>  $parts
      */
     private function joinNonEmptyStrings(array $parts): ?string
     {
@@ -1320,7 +1323,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
      */
     private function collectScalarValues(mixed $value): array
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return [];
         }
 
@@ -1369,7 +1372,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
     private function sanitizeProxyLabel(mixed $proxy): ?string
     {
-        if (!is_scalar($proxy)) {
+        if (! is_scalar($proxy)) {
             return null;
         }
 
@@ -1378,8 +1381,8 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             return null;
         }
 
-        if (!preg_match('/^[a-z0-9]+:\/\//i', $proxyString)) {
-            $proxyString = 'http://' . $proxyString;
+        if (! preg_match('/^[a-z0-9]+:\/\//i', $proxyString)) {
+            $proxyString = 'http://'.$proxyString;
         }
 
         $parts = parse_url($proxyString);
@@ -1392,8 +1395,8 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             return trim((string) $proxy);
         }
 
-        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
 
-        return $host . $port;
+        return $host.$port;
     }
 }

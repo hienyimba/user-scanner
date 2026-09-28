@@ -18,11 +18,10 @@ final class ScannerEngineService
         private readonly MetadataEnrichmentService $metadataEnrichment,
         private readonly MetadataCapabilityService $metadataCapability,
         private readonly ModuleSkipService $moduleSkips,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return array{results: array<int, ScanResult>, meta: array<string, mixed>}
      */
     public function scanWithMeta(string $target, string $mode, ?string $category = null, ?array $moduleKeys = null, array $options = []): array
@@ -45,7 +44,7 @@ final class ScannerEngineService
                     'proxy_offset' => $attemptOffset,
                 ]);
                 $attemptOffset++;
-                if ((bool) ($options['only_found'] ?? false) && !in_array($result->status, ['Found', 'Registered'], true)) {
+                if ((bool) ($options['only_found'] ?? false) && ! in_array($result->status, ['Found', 'Registered'], true)) {
                     continue;
                 }
 
@@ -68,7 +67,7 @@ final class ScannerEngineService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return array<int, ScanResult>
      */
     public function scan(string $target, string $mode, ?string $category = null, ?array $moduleKeys = null, array $options = []): array
@@ -89,7 +88,7 @@ final class ScannerEngineService
                 continue;
             }
 
-            $registryKey = $validator->mode() . ':' . $validator->key();
+            $registryKey = $validator->mode().':'.$validator->key();
             if (isset($seen[$registryKey])) {
                 continue;
             }
@@ -107,7 +106,7 @@ final class ScannerEngineService
                 'mode' => $validator->mode(),
                 'site_name' => $validator->siteName(),
                 'url' => $validator->siteUrl(),
-                'loud' => $this->isLoud($validator->siteName(), $mode),
+                'loud' => $this->isLoud($validator->siteName(), $validator->key(), $mode),
                 'nsfw' => $isNsfw,
                 'metadata_capability_level' => $this->metadataCapability->forModule($mode, $validator->key())['level'] ?? 1,
                 'metadata_capability_strategy' => $this->metadataCapability->forModule($mode, $validator->key())['strategy'] ?? 'unknown',
@@ -145,7 +144,7 @@ final class ScannerEngineService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return array{
      *   target:string,
      *   mode:string,
@@ -177,7 +176,7 @@ final class ScannerEngineService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      */
     public function runPlannedValidator(string $mode, string $validatorKey, string $target, array $options = []): ScanResult
     {
@@ -199,7 +198,7 @@ final class ScannerEngineService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      */
     private function runValidator(ValidatorContract $validator, string $target, string $mode, array $options): ScanResult
     {
@@ -231,7 +230,7 @@ final class ScannerEngineService
             ), $validator, $options);
         }
 
-        if (!(bool) ($options['allow_loud'] ?? false) && $this->isLoud($validator->siteName(), $mode)) {
+        if (! (bool) ($options['allow_loud'] ?? false) && $this->isLoud($validator->siteName(), $validator->key(), $mode)) {
             return $this->metadataEnrichment->enrich(new ScanResult(
                 target: $target,
                 category: strtolower($validator->category()),
@@ -260,7 +259,7 @@ final class ScannerEngineService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      */
     private function runValidatorWithProxyPolicy(ValidatorContract $validator, string $target, string $mode, array $options): ScanResult
     {
@@ -284,7 +283,7 @@ final class ScannerEngineService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      */
     private function executeValidator(ValidatorContract $validator, string $target, string $mode, array $options, ?string $proxy): ScanResult
     {
@@ -332,7 +331,7 @@ final class ScannerEngineService
                 continue;
             }
 
-            $registryKey = $validator->mode() . ':' . $validator->key();
+            $registryKey = $validator->mode().':'.$validator->key();
             if (isset($seen[$registryKey])) {
                 continue;
             }
@@ -342,7 +341,7 @@ final class ScannerEngineService
                 continue;
             }
 
-            if ($moduleKeys !== null && $moduleKeys !== [] && !in_array($validator->key(), $moduleKeys, true)) {
+            if ($moduleKeys !== null && $moduleKeys !== [] && ! in_array($validator->key(), $moduleKeys, true)) {
                 continue;
             }
 
@@ -401,11 +400,12 @@ final class ScannerEngineService
         return $keys;
     }
 
-    private function isLoud(string $siteName, string $mode): bool
+    private function isLoud(string $siteName, string $validatorKey, string $mode): bool
     {
         $catalog = config($mode === 'email' ? 'scanner.loud_modules.email' : 'scanner.loud_modules.username', []);
 
-        return in_array(strtolower($siteName), $catalog, true);
+        return in_array(strtolower($siteName), $catalog, true)
+            || in_array(strtolower($validatorKey), $catalog, true);
     }
 
     private function autoSkipReason(string $validatorKey, string $mode): ?string

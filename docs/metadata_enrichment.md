@@ -6,16 +6,16 @@ For a requirement-by-requirement evidence map, see `docs/metadata_acceptance_aud
 
 ## Source of truth
 
-- Python inventory source: `user-scanner-py-june-release/user_scanner`
-- Inventory scope: active modules under `user_scan/` and `email_scan/`
+- Python inventory sources: June `user_scan/` and September `email_scan/`
+- Inventory scope: active modules in `user-scanner-py-june-release/user_scanner/user_scan/` and `user-scanner-py-sept-release/user_scanner/email_scan/`
 - Explicitly excluded: any module under `abandoned/`
-- Laravel capability overrides: `config/scanner_metadata_capability_overrides.php` augments the June inventory for private Laravel-only modules and for email modules whose metadata capability now exceeds the original June Python implementation.
+- Laravel capability overrides: `config/scanner_metadata_capability_overrides.php` augments the mixed-release inventory for private Laravel-only modules and modules whose Laravel metadata capability exceeds the Python implementation.
 
-`App\Services\Scanner\MetadataCapabilityService` reads the June inventory and then applies Laravel capability overrides so documented capability can reflect the current production email layer instead of only the original Python source.
+`App\Services\Scanner\MetadataCapabilityService` reads the June username and September email inventories, then applies Laravel capability overrides so documented capability reflects the current production layer. If the git-ignored September reference checkout is absent, it reconstructs the active email inventory from the tracked June baseline plus `config/scanner_september_email.php`, so production and CI do not depend on the downloaded Python tree.
 
 Important distinction:
 
-- Documented capability counts come from static June-source analysis.
+- Documented capability counts come from static June-username and September-email source analysis.
 - Validated capability counts come from successful live proxy-backed audits recorded in `config/scanner_metadata_validations.php`.
 - Treat documented capability as expected coverage and validated capability as proven reproducible coverage.
 
@@ -78,7 +78,7 @@ Notes:
 
 ## Metadata capability levels
 
-Documented capability levels are inventory-level expectations derived from the June Python source:
+Documented capability levels are inventory-level expectations derived from the active bundled Python sources:
 
 - Level 0: broken or unsupported
 - Level 1: found/not-found only
@@ -100,14 +100,14 @@ php artisan scanner:metadata-readiness --json
 
 Current live snapshot in this checkout:
 
-- Documented modules: `293`
-- Documented level 3+: `189`
-- Documented level 4: `185`
-- Validated modules: `113`
-- Validated level 3+: `112`
-- Validated level 4: `100`
-- Username documented: `188`
-- Email documented: `105`
+- Documented modules: `414`
+- Documented level 3+: `227`
+- Documented level 4: `209`
+- Validated modules: `120`
+- Validated level 3+: `119`
+- Validated level 4: `105`
+- Username documented: `189`
+- Email documented: `225`
 
 Threshold flags:
 
@@ -194,7 +194,7 @@ php artisan scanner:metadata-acceptance-audit --revalidation-report=storage/app/
 - `App\DTO\ScanResult`: stable output schema and confidence derivation
 - `App\Services\Scanner\MetadataEnrichmentService`: enrichment pipeline used by scanner execution
 - `App\Services\Scanner\ProfileMetadataExtractor`: generic profile HTML / JSON-LD / OpenGraph extraction
-- `App\Services\Scanner\MetadataCapabilityService`: June-backed documented capability inventory
+- `App\Services\Scanner\MetadataCapabilityService`: June-username / September-email documented capability inventory
 - `App\Services\Scanner\MetadataAuditService`: target-level audit reports for actual output
 - `App\Services\Scanner\MetadataBaselineValidationService`: baseline validation and overlay generation
 - `App\Services\Scanner\MetadataRevalidationService`: overlay drift detection against validated targets
@@ -211,4 +211,4 @@ php artisan scanner:metadata-acceptance-audit --revalidation-report=storage/app/
 - `tests/Feature/MetadataRevalidationCommandTest.php`
 - `tests/Unit/MetadataCapabilityInventoryTest.php`
 
-These tests cover schema stability, stored-result normalization, readiness thresholds, and documented inventory counts from the June source.
+These tests cover schema stability, stored-result normalization, readiness thresholds, and documented inventory counts from the active release sources.

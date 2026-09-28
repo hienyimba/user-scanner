@@ -7,8 +7,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PY_ROOT = ROOT / "user-scanner-py-june-release" / "user_scanner"
-ACTIVE_DIRS = [PY_ROOT / "user_scan", PY_ROOT / "email_scan"]
+JUNE_ROOT = ROOT / "user-scanner-py-june-release" / "user_scanner"
+SEPTEMBER_ROOT = ROOT / "user-scanner-py-sept-release" / "user_scanner"
+ACTIVE_DIRS = [
+    (JUNE_ROOT / "user_scan", JUNE_ROOT, "username"),
+    (SEPTEMBER_ROOT / "email_scan", SEPTEMBER_ROOT, "email"),
+]
 
 RICH_SIGNAL_KEYS = {
     "name",
@@ -32,15 +36,15 @@ RICH_SIGNAL_KEYS = {
 }
 
 
-def iter_modules() -> list[Path]:
-    files: list[Path] = []
-    for base in ACTIVE_DIRS:
+def iter_modules() -> list[tuple[Path, Path, str]]:
+    files: list[tuple[Path, Path, str]] = []
+    for base, root, mode in ACTIVE_DIRS:
         files.extend(
-            path
+            (path, root, mode)
             for path in base.rglob("*.py")
             if path.name != "__init__.py" and "abandoned" not in path.parts
         )
-    return sorted(files)
+    return sorted(files, key=lambda item: str(item[0]))
 
 
 def infer_level(source: str, mode: str) -> tuple[int, dict[str, bool | int | list[str]]]:
@@ -93,10 +97,9 @@ def infer_level(source: str, mode: str) -> tuple[int, dict[str, bool | int | lis
     }
 
 
-def module_record(path: Path) -> dict[str, object]:
+def module_record(path: Path, root: Path, mode: str) -> dict[str, object]:
     source = path.read_text(encoding="utf-8")
-    rel = path.relative_to(PY_ROOT).as_posix()
-    mode = "username" if rel.startswith("user_scan/") else "email"
+    rel = path.relative_to(root).as_posix()
     category = path.parent.name
     platform = path.stem
     level, details = infer_level(source, mode)
@@ -112,7 +115,7 @@ def module_record(path: Path) -> dict[str, object]:
 
 
 def main() -> None:
-    records = [module_record(path) for path in iter_modules()]
+    records = [module_record(path, root, mode) for path, root, mode in iter_modules()]
     level_counts = Counter(record["capability_level"] for record in records)
     summary = {
         "total_modules": len(records),

@@ -15,5 +15,7 @@ node_modules/
 !/tests/Feature/
 /tests/Feature/*
 !/tests/Feature/UpstreamSkippedModuleFixesTest.php
+!/tests/Feature/DropboxEmailValidatorTest.php
+!/tests/Feature/SeptemberDeclarativeEmailValidatorTest.php
 /user-maigret-main
 /user-scanner-py-sept-release
