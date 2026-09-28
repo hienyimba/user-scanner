@@ -11,6 +11,7 @@ SEPTEMBER_ROOT = ROOT / 'user-scanner-py-sept-release' / 'user_scanner'
 PHP_ROOT = ROOT / 'app' / 'Services' / 'Scanner' / 'Validators' / 'Generated'
 VALIDATOR_ROOT = ROOT / 'app' / 'Services' / 'Scanner' / 'Validators'
 SEPTEMBER_CONFIG = ROOT / 'config' / 'scanner_september_email.php'
+SEPTEMBER_USERNAME_CONFIG = ROOT / 'config' / 'scanner_september_username.php'
 
 from generate_validators import MANUAL_EMAIL_KEYS, MANUAL_USER_KEYS, build_spec, sync_manual_sets  # type: ignore
 
@@ -18,7 +19,7 @@ from generate_validators import MANUAL_EMAIL_KEYS, MANUAL_USER_KEYS, build_spec,
 def discover_specs():
     specs = []
     sources = (
-        (JUNE_ROOT / 'user_scan', 'username'),
+        (SEPTEMBER_ROOT / 'user_scan', 'username'),
         (SEPTEMBER_ROOT / 'email_scan', 'email'),
     )
     for base, mode in sources:
@@ -50,6 +51,9 @@ def registered_runtime_keys(mode: str) -> dict[str, Path]:
     if mode == 'email' and SEPTEMBER_CONFIG.is_file():
         for key in re.findall(r"'key'\s*=>\s*'([^']+)'", SEPTEMBER_CONFIG.read_text(encoding='utf-8')):
             found.setdefault(key, SEPTEMBER_CONFIG)
+    if mode == 'username' and SEPTEMBER_USERNAME_CONFIG.is_file():
+        for key in re.findall(r"'key'\s*=>\s*'([^']+)'", SEPTEMBER_USERNAME_CONFIG.read_text(encoding='utf-8')):
+            found.setdefault(key, SEPTEMBER_USERNAME_CONFIG)
 
     return found
 
@@ -63,6 +67,8 @@ def parity_class(spec, php_path: Path | None) -> str:
     if php_path is None:
         return 'missing'
     if php_path == SEPTEMBER_CONFIG:
+        return 'september-declarative'
+    if php_path == SEPTEMBER_USERNAME_CONFIG:
         return 'september-declarative'
     manual = MANUAL_USER_KEYS if spec.mode == 'username' else MANUAL_EMAIL_KEYS
     if spec.key in manual:
@@ -81,6 +87,7 @@ def parity_class(spec, php_path: Path | None) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--output', type=Path, default=None)
+    parser.add_argument('--quiet', action='store_true')
     args = parser.parse_args()
 
     specs = discover_specs()
@@ -99,6 +106,7 @@ def main() -> None:
             'python_path': str(spec.python_path),
             'php_path': str(php_path) if php_path is not None else str(php_path_for(spec)),
             'parity_class': parity_class(spec, php_path),
+            'complexity': spec.complexity,
             'traits': {
                 'request_method': spec.request_method,
                 'url_pattern': spec.request_url,
@@ -126,7 +134,8 @@ def main() -> None:
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered, encoding='utf-8')
-    print(rendered)
+    if not args.quiet:
+        print(rendered)
 
 
 if __name__ == '__main__':

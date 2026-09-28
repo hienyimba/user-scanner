@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import argparse
 import json
 import re
 from dataclasses import dataclass
@@ -9,6 +10,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 PY_ROOT = ROOT / 'user-scanner-py-june-release' / 'user_scanner'
+SEPTEMBER_PY_ROOT = ROOT / 'user-scanner-py-sept-release' / 'user_scanner'
 PHP_ROOT = ROOT / 'app' / 'Services' / 'Scanner' / 'Validators' / 'Generated'
 CONFIG_FILE = ROOT / 'config' / 'scanner_generated.php'
 
@@ -419,10 +421,12 @@ final class {spec.class_name} extends BaseGeneratedValidator
 """
 
 
-def discover_specs() -> list[ModuleSpec]:
+def discover_specs(py_root: Path = PY_ROOT, selected_mode: str = 'all') -> list[ModuleSpec]:
     specs: list[ModuleSpec] = []
     for mode, folder in (('username', 'user_scan'), ('email', 'email_scan')):
-        for category_dir in sorted((PY_ROOT / folder).iterdir()):
+        if selected_mode != 'all' and mode != selected_mode:
+            continue
+        for category_dir in sorted((py_root / folder).iterdir()):
             if not category_dir.is_dir() or category_dir.name.startswith('__') or category_dir.name.lower() == 'abandoned':
                 continue
             for py_file in sorted(category_dir.glob('*.py')):
@@ -442,15 +446,18 @@ def sync_manual_sets(specs: list[ModuleSpec]) -> None:
                 MANUAL_EMAIL_KEYS.add(spec.key)
 
 
-def write_validator(spec: ModuleSpec) -> None:
+def write_validator(spec: ModuleSpec, overwrite: bool = False) -> bool:
     namespace_mode = 'User' if spec.mode == 'username' else 'Email'
     out_dir = PHP_ROOT / namespace_mode
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f'{spec.class_name}.php'
     explicit_manual = MANUAL_USER_KEYS if spec.mode == 'username' else MANUAL_EMAIL_KEYS
     if spec.key in explicit_manual:
-        return
+        return False
+    if path.exists() and not overwrite:
+        return False
     path.write_text(render_generated_php(spec), encoding='utf-8')
+    return True
 
 
 def write_config() -> None:
@@ -463,15 +470,26 @@ def write_config() -> None:
 
 
 def main() -> None:
-    specs = discover_specs()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--release', choices=['june', 'september'], default='june')
+    parser.add_argument('--mode', choices=['all', 'username', 'email'], default='all')
+    parser.add_argument('--overwrite', action='store_true')
+    parser.add_argument('--dry-run', action='store_true')
+    args = parser.parse_args()
+
+    py_root = SEPTEMBER_PY_ROOT if args.release == 'september' else PY_ROOT
+    specs = discover_specs(py_root, args.mode)
     sync_manual_sets(specs)
-    for spec in specs:
-        write_validator(spec)
-    write_config()
+    written = 0
+    if not args.dry_run:
+        for spec in specs:
+            written += int(write_validator(spec, overwrite=args.overwrite))
+        write_config()
     report = {
         'manual_user_keys': sorted(MANUAL_USER_KEYS),
         'manual_email_keys': sorted(MANUAL_EMAIL_KEYS),
         'generated_count': len([s for s in specs if s.key not in (MANUAL_USER_KEYS if s.mode == 'username' else MANUAL_EMAIL_KEYS)]),
+        'written_count': written,
         'total': len(specs),
     }
     print(json.dumps(report, indent=2))

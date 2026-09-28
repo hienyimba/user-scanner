@@ -337,6 +337,8 @@ abstract class BaseGeneratedValidator implements ValidatorContract
 
         foreach ([
             'verify you are human',
+            'making sure you&#39;re not a bot',
+            "making sure you're not a bot",
             'bot check',
             'security verification',
             'checking your browser',

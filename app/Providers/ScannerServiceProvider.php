@@ -15,6 +15,7 @@ use App\Services\Scanner\ProfileMetadataExtractor;
 use App\Services\Scanner\ProxyManagerService;
 use App\Services\Scanner\ScannerEngineService;
 use App\Services\Scanner\Validators\Generated\September\DeclarativeEmailValidator;
+use App\Services\Scanner\Validators\Generated\September\DeclarativeUsernameValidator;
 use Illuminate\Support\ServiceProvider;
 
 final class ScannerServiceProvider extends ServiceProvider
@@ -55,6 +56,19 @@ final class ScannerServiceProvider extends ServiceProvider
                 }
 
                 $validator = new DeclarativeEmailValidator($definition);
+                $registryKey = $validator->mode().':'.$validator->key();
+
+                if (! isset($validators[$registryKey])) {
+                    $validators[$registryKey] = $validator;
+                }
+            }
+
+            foreach (config('scanner_september_username.modules', []) as $definition) {
+                if (! is_array($definition)) {
+                    continue;
+                }
+
+                $validator = new DeclarativeUsernameValidator($definition);
                 $registryKey = $validator->mode().':'.$validator->key();
 
                 if (! isset($validators[$registryKey])) {
