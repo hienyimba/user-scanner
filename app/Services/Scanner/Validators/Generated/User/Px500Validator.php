@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner\Validators\Generated\User;
 
-// parity-source: C:/Users/hieny/GitHub/user-scanner/user-scanner-py-june-release/user_scanner/user_scan/social/px500.py
-// parity-class: manual-june
+// Upstream's GraphQL request was corrected in PR #604 to keep the username
+// out of the raw query string. The api.500px.com host has since disappeared,
+// so this port uses the public profile's server-rendered crawler response.
 
-use App\DTO\ScanResult;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 
@@ -35,12 +35,23 @@ final class Px500Validator extends BaseGeneratedValidator
 
     public function siteUrl(): string
     {
-        return 'https://500px.com/{user}';
+        return 'https://500px.com/p/{user}';
     }
 
     protected function requestUrl(string $target): string
     {
-        return "https://api.500px.com/graphql?query=query%28%24username%3AString%21%29%7BuserByUsername%28username%3A%24username%29%7Bid%20legacyId%20username%20displayName%20firstName%20lastName%20registeredAt%20userProfile%7Bfirstname%20lastname%20about%20country%20city%20state%7DsocialMedia%7Bwebsite%20twitter%20facebook%20instagram%7D%7D%7D&variables=%7B%22username%22%3A%22{$target}%22%7D";
+        return 'https://500px.com/p/'.rawurlencode($target);
+    }
+
+    protected function requestHeaders(): array
+    {
+        return [
+            // 500px's ordinary response is now a client-rendered shell. Its
+            // crawler response contains the canonical profile metadata and a
+            // rendered not-found component, which gives both explicit states.
+            'User-Agent' => 'Twitterbot/1.0',
+            'Accept' => 'text/html,application/xhtml+xml',
+        ];
     }
 
     protected function followRedirects(): bool
@@ -53,18 +64,48 @@ final class Px500Validator extends BaseGeneratedValidator
         return 10;
     }
 
+    protected function detectBlockedOrChallenged(Response $response): ?array
+    {
+        if ($response->status() === 200) {
+            $body = $response->body();
+
+            // The server-rendered payload includes translated anti-bot copy in
+            // its JavaScript state. Explicit rendered profile/not-found markers
+            // take precedence so those inert strings are not false challenges.
+            if ($this->hasRenderedUnavailableMarker($body)
+                || $this->metaContent($body, 'property', 'og:url') !== null) {
+                return null;
+            }
+        }
+
+        return parent::detectBlockedOrChallenged($response);
+    }
+
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         $status = $response->status();
 
         if ($status === 200) {
             $data = $response->json();
-            if (data_get($data, 'data.userByUsername') !== null) {
-                return ['Taken', ''];
+            if (is_array($data)) {
+                if (data_get($data, 'data.userByUsername') !== null) {
+                    return ['Taken', ''];
+                }
+
+                if (data_get($data, 'errors.0.extensions.response.status') === 404
+                    || data_get($data, 'data.userByUsername') === null) {
+                    return ['Available', ''];
+                }
             }
 
-            if (data_get($data, 'errors.0.extensions.response.status') === 404 || data_get($data, 'data.userByUsername') === null) {
+            $body = $response->body();
+            if ($this->hasRenderedUnavailableMarker($body)) {
                 return ['Available', ''];
+            }
+
+            $profileUrl = 'https://500px.com/p/'.rawurlencode($target);
+            if ($this->metaContent($body, 'property', 'og:url') === $profileUrl) {
+                return ['Taken', ''];
             }
         }
 
@@ -73,5 +114,28 @@ final class Px500Validator extends BaseGeneratedValidator
         }
 
         return ['Error', 'Unexpected response body, report it via GitHub issues.'];
+    }
+
+    private function hasRenderedUnavailableMarker(string $html): bool
+    {
+        return preg_match('/<[^>]+>\s*This user is unavailable\s*<\/[^>]+>/i', $html) === 1;
+    }
+
+    private function metaContent(string $html, string $attribute, string $expectedValue): ?string
+    {
+        if (preg_match_all('/<meta\b[^>]*>/i', $html, $tags) === false) {
+            return null;
+        }
+
+        foreach ($tags[0] as $tag) {
+            if (preg_match('/\b'.preg_quote($attribute, '/').'=["\']'.preg_quote($expectedValue, '/').'["\']/i', $tag) !== 1
+                || preg_match('/\bcontent=["\']([^"\']+)["\']/i', $tag, $content) !== 1) {
+                continue;
+            }
+
+            return html_entity_decode($content[1], ENT_QUOTES | ENT_HTML5);
+        }
+
+        return null;
     }
 }

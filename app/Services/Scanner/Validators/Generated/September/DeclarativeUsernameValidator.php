@@ -5,7 +5,12 @@ declare(strict_types=1);
 namespace App\Services\Scanner\Validators\Generated\September;
 
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
+use DOMDocument;
+use DOMXPath;
+use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
+use RuntimeException;
 use Throwable;
 
 /**
@@ -91,6 +96,41 @@ final class DeclarativeUsernameValidator extends BaseGeneratedValidator
     protected function followRedirects(): bool
     {
         return (bool) data_get($this->definition, 'request.follow_redirects', true);
+    }
+
+    protected function makeRequest(string $target, array $options = []): Response
+    {
+        if ($this->key() !== 'chaturbate') {
+            return parent::makeRequest($target, $options);
+        }
+
+        // Validate only the username field. Never submit a complete registration.
+        $client = Http::timeout($this->timeoutSeconds())->withOptions([
+            'allow_redirects' => true,
+            'verify' => (bool) config('scanner.verify_ssl', false),
+            'cookies' => new CookieJar,
+        ])->withHeaders(['User-Agent' => (string) config('scanner.user_agent')]);
+        if (! empty($options['proxy'])) {
+            $client->withOptions(['proxy' => $options['proxy']]);
+        }
+        $page = $client->get('https://chaturbate.com/accounts/register/');
+        if ($page->status() !== 200) {
+            return $page;
+        }
+        $xpath = $this->htmlXPath($page->body());
+        $csrf = $xpath->evaluate('string(//input[@name="csrfmiddlewaretoken"]/@value)');
+        if (! is_string($csrf) || $csrf === '') {
+            throw new RuntimeException('Chaturbate registration page missing CSRF token; no username verdict');
+        }
+
+        return $client->asForm()->withHeaders([
+            'X-Requested-With' => 'XMLHttpRequest',
+            'Origin' => 'https://chaturbate.com',
+            'Referer' => 'https://chaturbate.com/accounts/register/',
+        ])->post('https://chaturbate.com/accounts/ajax_validate_register_form/', [
+            'csrfmiddlewaretoken' => $csrf,
+            'username' => $target,
+        ]);
     }
 
     protected function parseConnectorResponse(Response $response, string $target): array
@@ -620,6 +660,9 @@ final class DeclarativeUsernameValidator extends BaseGeneratedValidator
     /** @return array{0:string,1:string} */
     private function parseCustomProfile(Response $response, string $target): array
     {
+        if (in_array($this->key(), ['cssbattle', 'fragment', 'paypal', 'iha', 'chaturbate'], true)) {
+            return $this->parseVerifiedCustomProfile($response, $target);
+        }
         if ($response->status() === 404) {
             return ['Available', ''];
         }
@@ -649,6 +692,108 @@ final class DeclarativeUsernameValidator extends BaseGeneratedValidator
         return str_contains($body, strtolower($target))
             ? ['Taken', '']
             : ['Error', 'Profile response did not contain target evidence'];
+    }
+
+    /** @return array{0:string,1:string} */
+    private function parseVerifiedCustomProfile(Response $response, string $target): array
+    {
+        if ($response->status() === 404 && $this->key() !== 'chaturbate') {
+            return ['Available', ''];
+        }
+        if ($response->status() !== 200) {
+            return ['Error', 'Unexpected '.$this->siteName().' status: '.$response->status()];
+        }
+        if ($this->key() === 'chaturbate') {
+            $json = $this->decodeJson($response);
+            if (! is_bool($json['valid'] ?? null) || ! is_array($json['errors'] ?? null)) {
+                return ['Error', 'Chaturbate response missing form-validation errors'];
+            }
+            $errors = $json['errors']['username'] ?? [];
+            if ($errors === [] || $errors === '') {
+                $unknownFields = array_diff(array_keys($json['errors']), ['username', 'gender', 'terms', 'privacy_policy', 'password', 'password2', 'email']);
+
+                return $unknownFields === []
+                    ? ['Available', ''] : ['Error', 'Chaturbate returned non-field validation errors; account status unknown'];
+            }
+            foreach ((array) $errors as $error) {
+                if (is_string($error) && stripos($error, 'already taken') !== false) {
+                    return ['Taken', ''];
+                }
+            }
+
+            return ['Error', 'Chaturbate rejected the username without an availability verdict'];
+        }
+
+        $xpath = $this->htmlXPath($response->body());
+        $title = trim((string) $xpath->evaluate('string(//title)'));
+        if ($this->key() === 'cssbattle') {
+            $json = json_decode((string) $xpath->evaluate('string(//script[@id="__NEXT_DATA__"])'), true);
+            $page = data_get($json, 'props.pageProps');
+            if (is_array($page) && array_key_exists('player', $page)) {
+                if ($page['player'] === null) {
+                    return ['Available', ''];
+                }
+                if (is_array($page['player']) && strcasecmp((string) ($page['player']['username'] ?? ''), $target) === 0) {
+                    return ['Taken', ''];
+                }
+            }
+
+            return ['Error', 'CSSBattle player payload missing or did not match the requested username'];
+        }
+        if ($this->key() === 'fragment') {
+            $status = $xpath->query('//*[contains(concat(" ", normalize-space(@class), " "), " tm-section-header-status ")]');
+            $canonical = (string) $xpath->evaluate('string(//link[@rel="canonical"]/@href)');
+            $ogUrl = (string) $xpath->evaluate('string(//meta[@property="og:url"]/@content)');
+            $expected = 'https://fragment.com/username/'.rawurlencode($target);
+            if ($status->length > 0 && (strcasecmp(rtrim($canonical, '/'), $expected) === 0
+                || strcasecmp(rtrim($ogUrl, '/'), $expected) === 0)) {
+                return ['Taken', ''];
+            }
+            if (strcasecmp($title, 'Fragment') === 0 && $status->length === 0) {
+                return ['Available', ''];
+            }
+
+            return ['Error', 'Fragment page lacked a verified username listing'];
+        }
+        if ($this->key() === 'paypal') {
+            $description = (string) $xpath->evaluate('string(//meta[@property="og:description"]/@content)');
+            $ogTitle = trim((string) $xpath->evaluate('string(//meta[@property="og:title"]/@content)'));
+            if (preg_match('~paypal\.me/'.preg_quote($target, '~').'(?![a-z0-9._-])~i', $description) === 1) {
+                return ['Taken', ''];
+            }
+            if (in_array(strtolower($ogTitle), ['get your very own paypal.me link', 'paypal.me', 'paypal'], true)) {
+                return ['Available', ''];
+            }
+
+            return ['Error', 'PayPal.Me response lacked profile or explicit landing-page evidence'];
+        }
+
+        $username = trim((string) $xpath->evaluate('string(//*[contains(concat(" ", normalize-space(@class), " "), " member_username ")])'));
+        if ($username !== '') {
+            return strcasecmp($username, $target) === 0
+                ? ['Taken', ''] : ['Error', 'Iha profile did not match the requested username'];
+        }
+        $visible = (string) $xpath->evaluate('string(//body)');
+        if (str_contains($visible, 'Sellist kasutajat ei leitud')
+            || ($title === 'Iha.ee - Seksikate inimeste kohtumispaik' && $xpath->query('//*[@id="online_list"]')->length > 0)) {
+            return ['Available', ''];
+        }
+
+        return ['Error', 'Iha response lacked a verified member profile'];
+    }
+
+    private function htmlXPath(string $html): DOMXPath
+    {
+        $document = new DOMDocument;
+        $previous = libxml_use_internal_errors(true);
+        try {
+            $document->loadHTML('<?xml encoding="UTF-8">'.$html);
+        } finally {
+            libxml_clear_errors();
+            libxml_use_internal_errors($previous);
+        }
+
+        return new DOMXPath($document);
     }
 
     /** @param array<string, mixed> $json @return array<string, mixed> */

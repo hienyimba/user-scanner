@@ -92,6 +92,15 @@ final class NykaamanValidator extends BaseGeneratedValidator
         return 15;
     }
 
+    protected function detectBlockedOrChallenged(Response $response): ?array
+    {
+        if ($response->status() === 403) {
+            return ['Error', 'Nykaaman is blocked by the regional Akamai edge; retry through a US proxy exit'];
+        }
+
+        return parent::detectBlockedOrChallenged($response);
+    }
+
     protected function parseConnectorResponse(Response $response, string $target): array
     {
         if ($response->status() === 403) {
@@ -101,7 +110,7 @@ final class NykaamanValidator extends BaseGeneratedValidator
             return ['Error', 'Rate limited (429)'];
         }
         if ($response->status() !== 200) {
-            return ['Error', 'HTTP Error: ' . $response->status()];
+            return ['Error', 'HTTP Error: '.$response->status()];
         }
 
         $inner = (array) data_get($response->json(), 'response', []);

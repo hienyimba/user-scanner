@@ -164,6 +164,7 @@ return [
             'site_name' => 'Fixderma',
             'site_url' => 'https://www.fixderma.com',
             'source' => 'email_scan/shopping/fixderma.py',
+            'semantic_statuses' => [401],
             'request' => [
                 'method' => 'POST',
                 'url' => 'https://fixderma-skincare.myshopify.com/api/2025-04/graphql',
@@ -180,6 +181,7 @@ return [
                 'body' => 'mutation {customerCreate(input:{email:"{target_json}",password:"no",firstName:"nopi",lastName:"fish"}){customer{firstName,lastName,email,id,tags},customerUserErrors{field,message}}}',
             ],
             'rules' => [
+                ['when' => ['field' => 'status', 'value' => 401], 'status' => 'Error', 'reason' => 'Fixderma Storefront API rejected the configured access token (HTTP 401); account status unknown'],
                 ['when' => ['all' => [
                     ['field' => 'status', 'value' => 200],
                     ['field' => 'json', 'path' => 'data.customerCreate.customerUserErrors', 'operator' => 'array_any', 'where' => ['all' => [
@@ -358,6 +360,10 @@ return [
                 'body' => ['username' => '{target}', 'password' => 'dummy_password_xyz123'],
             ],
             'rules' => [
+                ['when' => ['all' => [
+                    ['field' => 'status', 'operator' => 'in', 'value' => [400, 401]],
+                    ['field' => 'json', 'path' => 'message', 'value' => 'Please check your email and password and try again.'],
+                ]], 'status' => 'Error', 'reason' => 'EvolveYou returned a generic credential error; account existence cannot be determined'],
                 ['when' => ['all' => [
                     ['field' => 'status', 'operator' => 'in', 'value' => [400, 401]],
                     ['field' => 'json', 'path' => 'message', 'operator' => 'contains_ci', 'value' => 'incorrect username or password'],
@@ -655,6 +661,7 @@ return [
             'key' => 'babbel', 'category' => 'learning', 'site_name' => 'Babbel',
             'site_url' => 'https://play.google.com/store/apps/details?id=com.babbel.mobile.android.en',
             'source' => 'email_scan/learning/babbel.py',
+            'unexpected_reason' => 'Babbel registration validation endpoint returned HTTP {http_status}; no account verdict',
             'request' => [
                 'method' => 'POST', 'url' => 'https://api.babbel.io/gamma/v2/en/users/',
                 'headers' => [
@@ -795,8 +802,9 @@ return [
             'site_url' => 'https://www.lingq.com', 'source' => 'email_scan/learning/lingq.py',
             'request' => ['method' => 'GET', 'url' => 'https://www.lingq.com/en/accounts/validate-field/', 'query' => ['email' => '{target}']],
             'rules' => [
-                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json_root', 'operator' => 'empty']]], 'status' => 'Not Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json_root', 'operator' => 'exists'], ['field' => 'json_root', 'operator' => 'empty']]], 'status' => 'Not Registered'],
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'email.is_valid', 'operator' => 'falsy'], ['field' => 'json', 'path' => 'email.message', 'operator' => 'array_contains_ci', 'value' => 'already have an account']]], 'status' => 'Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'email.is_valid', 'operator' => 'falsy'], ['field' => 'json', 'path' => 'email.message', 'operator' => 'array_contains_ci', 'value' => 'Enter a valid email address.']]], 'status' => 'Error', 'reason' => 'LingQ rejected the address as invalid; account existence cannot be determined'],
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'email.is_valid', 'operator' => 'falsy']]], 'status' => 'Error', 'reason' => 'Email rejected by LingQ'],
             ],
         ],
@@ -1228,6 +1236,7 @@ return [
             'json_from_braces' => true, 'transport_profile' => 'chrome120',
             'request' => ['method' => 'POST', 'url' => 'https://www.canva.com/_ajax/authnflow/user-authentication-methods', 'body_mode' => 'raw', 'headers' => ['Referer' => 'https://www.canva.com/login', 'X-Requested-With' => 'XMLHttpRequest', 'Content-Type' => 'application/json', 'Accept' => 'application/json, text/plain, */*'], 'body' => '{"C":"Linux / Chrome","A?":"E","L":"{target_json}"}'],
             'rules' => [
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'body', 'operator' => 'contains_ci', 'value' => '<title>Client Challenge</title>']]], 'status' => 'Error', 'reason' => 'Canva returned an anti-bot client challenge (HTTP 200); account status unknown'],
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'B.A?', 'value' => 'A']]], 'status' => 'Registered'],
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'B.A?', 'value' => 'B']]], 'status' => 'Not Registered'],
             ],
