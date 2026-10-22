@@ -7,6 +7,7 @@ namespace App\Jobs;
 use App\DTO\ScanResult;
 use App\Services\Scanner\ProxyExecutionPolicy;
 use App\Services\Scanner\ProxyManagerService;
+use App\Services\Scanner\ScanJobScheduler;
 use App\Services\Scanner\ScannerEngineService;
 use App\Support\ScanRunStore;
 use Illuminate\Bus\Queueable;
@@ -27,9 +28,12 @@ final class RunValidatorJob implements ShouldQueue
 
     public int $tries;
 
+    // A default preserves compatibility with jobs serialized before scheduling.
+    public ?int $scheduledTaskId = null;
+
     /**
-     * @param array<string, mixed> $validatorMeta
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $validatorMeta
+     * @param  array<string, mixed>  $options
      */
     public function __construct(
         public readonly string $runId,
@@ -48,7 +52,14 @@ final class RunValidatorJob implements ShouldQueue
 
     public function handle(ScannerEngineService $engine, ProxyManagerService $proxyManager, ScanRunStore $store): void
     {
-        $store->markJobStarted($this->runId);
+        $scheduler = app(ScanJobScheduler::class);
+        if ($this->scheduledTaskId !== null) {
+            if (! $scheduler->start($this, $store)) {
+                return;
+            }
+        } else {
+            $store->markJobStarted($this->runId);
+        }
 
         try {
             $result = $this->runWithProxyPolicy($engine, $proxyManager);
@@ -56,12 +67,22 @@ final class RunValidatorJob implements ShouldQueue
             $result = $this->errorResult($e->getMessage());
         }
 
-        $store->appendResult($this->runId, $result->toArray(), $this->targetIndex, $this->validatorIndex);
+        if ($this->scheduledTaskId !== null) {
+            $scheduler->finish($this, $store, $result->toArray());
+        } else {
+            $store->appendResult($this->runId, $result->toArray(), $this->targetIndex, $this->validatorIndex);
+        }
     }
 
-    public function failed(?\Throwable $exception): void
+    public function failed(?Throwable $exception): void
     {
         if ($exception === null) {
+            return;
+        }
+
+        if ($this->scheduledTaskId !== null) {
+            app(ScanJobScheduler::class)->finish($this, app(ScanRunStore::class), $this->errorResult($exception->getMessage())->toArray());
+
             return;
         }
 

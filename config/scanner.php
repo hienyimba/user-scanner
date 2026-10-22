@@ -397,6 +397,16 @@ return [
 
     'async' => [
         'queue' => env('SCANNER_ASYNC_QUEUE', 'scanner'),
+        'connection' => env('SCANNER_QUEUE_CONNECTION'),
+        'queues' => [
+            'email' => env('SCANNER_EMAIL_QUEUE', 'scanner-email'),
+            'username' => env('SCANNER_USERNAME_QUEUE', 'scanner-username'),
+        ],
+        'fair_scheduling' => env('SCANNER_FAIR_SCHEDULING', true),
+        'windows' => [
+            'email' => (int) env('SCANNER_EMAIL_RUN_WINDOW', 15),
+            'username' => (int) env('SCANNER_USERNAME_RUN_WINDOW', 15),
+        ],
         'job_timeout' => (int) env('SCANNER_ASYNC_JOB_TIMEOUT', 60),
         'job_tries' => (int) env('SCANNER_ASYNC_JOB_TRIES', 1),
         'sync_result_threshold' => (int) env('SCANNER_SYNC_RESULT_THRESHOLD', 12),

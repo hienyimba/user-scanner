@@ -7,6 +7,7 @@ namespace App\Services\Scanner;
 use App\Jobs\RunValidatorJob;
 use App\Support\ScanRunStore;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 final class QueuedScanService
@@ -15,12 +16,12 @@ final class QueuedScanService
         private readonly ScannerEngineService $engine,
         private readonly ProxyManagerService $proxyManager,
         private readonly ScanRunStore $store,
-    ) {
-    }
+        private readonly ScanJobScheduler $scheduler,
+    ) {}
 
     /**
-     * @param array<int, string> $targets
-     * @param array<string, mixed> $options
+     * @param  array<int, string>  $targets
+     * @param  array<string, mixed>  $options
      * @return array{run_id:string, expected_results:int, validator_count:int, expanded_targets: array<int, string>}
      */
     public function startRun(string $mode, array $targets, ?string $category = null, ?array $moduleKeys = null, array $options = []): array
@@ -31,6 +32,7 @@ final class QueuedScanService
         ), static fn (string $target): bool => $target !== '')));
 
         $preparedOptions = $this->prepareOptions($options);
+        $fairScheduling = $this->scheduler->usesFairScheduling();
         $plans = [];
         $expandedTargets = [];
         $selectedValidatorKeys = [];
@@ -55,20 +57,22 @@ final class QueuedScanService
             ));
         }
 
-        $runId = $this->store->createRun(
-            mode: $mode,
-            targets: $targets,
-            options: $preparedOptions + [
-                'category' => $category,
-                'module_keys' => $moduleKeys ?? [],
-            ],
-            expandedTargets: $expandedTargets,
-            validatorCount: $validatorCount,
-            expectedResults: $expectedResults,
-            selectedValidatorKeys: $selectedValidatorKeys,
-        );
+        $runId = null;
+        $enqueue = function () use (&$runId, $mode, $targets, $category, $moduleKeys, $preparedOptions, $expandedTargets, $validatorCount, $expectedResults, $selectedValidatorKeys, $plans, $fairScheduling): void {
+            $runId = $this->store->createRun(
+                mode: $mode,
+                targets: $targets,
+                options: $preparedOptions + [
+                    'category' => $category,
+                    'module_keys' => $moduleKeys ?? [],
+                ],
+                expandedTargets: $expandedTargets,
+                validatorCount: $validatorCount,
+                expectedResults: $expectedResults,
+                selectedValidatorKeys: $selectedValidatorKeys,
+            );
 
-        try {
+            $jobs = [];
             $globalTargetIndex = 0;
             foreach ($plans as $plan) {
                 foreach ($plan['expanded_targets'] as $targetOffset => $expandedTarget) {
@@ -94,14 +98,33 @@ final class QueuedScanService
                             $job->delay(now()->addMilliseconds((int) round($globalTargetIndex * $delaySeconds * 1000)));
                         }
 
-                        dispatch($job->onQueue((string) config('scanner.async.queue', 'scanner')));
+                        if ($fairScheduling) {
+                            $jobs[] = $job;
+                        } else {
+                            dispatch($job->onConnection($this->scheduler->connection())->onQueue($this->scheduler->queueFor($mode)));
+                        }
                     }
 
                     $globalTargetIndex++;
                 }
             }
+
+            if ($fairScheduling) {
+                $this->scheduler->stage($runId, $jobs);
+            }
+        };
+
+        try {
+            // A killed request must not leave a visible run without its tasks.
+            if ($fairScheduling) {
+                DB::transaction($enqueue, 3);
+            } else {
+                $enqueue();
+            }
         } catch (\Throwable $e) {
-            $this->store->failRun($runId, $e->getMessage());
+            if ($runId !== null) {
+                $this->store->failRun($runId, $e->getMessage());
+            }
             throw $e;
         }
 
@@ -114,7 +137,7 @@ final class QueuedScanService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
     public function prepareOptions(array $options): array
@@ -123,18 +146,18 @@ final class QueuedScanService
         $disableProxy = (bool) Arr::get($prepared, 'disable_proxy', false);
         $defaultProxyList = implode(PHP_EOL, config('scanner.proxy_list', []));
 
-        if (!$disableProxy && empty($prepared['proxy_list']) && $defaultProxyList !== '') {
+        if (! $disableProxy && empty($prepared['proxy_list']) && $defaultProxyList !== '') {
             $prepared['proxy_list'] = $defaultProxyList;
         }
 
-        if (!$disableProxy && !empty($prepared['proxy_list'])) {
+        if (! $disableProxy && ! empty($prepared['proxy_list'])) {
             $this->proxyManager->loadFromText((string) $prepared['proxy_list']);
-            if (!empty($prepared['validate_proxies'])) {
+            if (! empty($prepared['validate_proxies'])) {
                 $this->proxyManager->validateWorking();
                 $prepared['proxy_list'] = implode(PHP_EOL, $this->proxyManager->all());
             }
 
-            $prepared['use_proxy'] = !empty($prepared['use_proxy']) || trim((string) $prepared['proxy_list']) !== '';
+            $prepared['use_proxy'] = ! empty($prepared['use_proxy']) || trim((string) $prepared['proxy_list']) !== '';
         }
 
         if ($disableProxy) {

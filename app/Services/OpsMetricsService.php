@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services;
 
 use App\Services\Scanner\ModuleSkipService;
+use App\Services\Scanner\ScanJobScheduler;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -52,14 +53,18 @@ final class OpsMetricsService
     public function captureQueueSnapshot(): array
     {
         $queue = (string) config('scanner.async.queue', 'scanner');
+        $queues = app(ScanJobScheduler::class)->queues();
 
         $queuedJobs = DB::table('jobs')
-            ->where('queue', $queue)
+            ->whereIn('queue', $queues)
             ->whereNull('reserved_at')
             ->count();
 
+        // Include work held outside jobs by the bounded per-run scheduler.
+        $queuedJobs += DB::table('scan_run_tasks')->whereIn('queue', $queues)->whereNull('dispatched_at')->count();
+
         $reservedJobs = DB::table('jobs')
-            ->where('queue', $queue)
+            ->whereIn('queue', $queues)
             ->whereNotNull('reserved_at')
             ->count();
 

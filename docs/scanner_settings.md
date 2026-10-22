@@ -17,6 +17,13 @@ These values are tuned for external API use where we want stable completion, con
 
 ```dotenv
 SCANNER_ASYNC_QUEUE=scanner
+SCANNER_QUEUE_CONNECTION=database
+DB_QUEUE_RETRY_AFTER=120
+SCANNER_EMAIL_QUEUE=scanner-email
+SCANNER_USERNAME_QUEUE=scanner-username
+SCANNER_FAIR_SCHEDULING=true
+SCANNER_EMAIL_RUN_WINDOW=15
+SCANNER_USERNAME_RUN_WINDOW=15
 SCANNER_ASYNC_JOB_TIMEOUT=60
 SCANNER_ASYNC_JOB_TRIES=1
 SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS=3
@@ -39,7 +46,14 @@ SCANNER_METADATA_MAX_EXTERNAL_LINKS=10
 
 Do not fix proxy-capacity errors by only increasing `SCANNER_PROXY_WAIT_TIMEOUT_SECONDS`. That usually raises p95 and can push jobs into queue timeouts. First match queue worker concurrency to proxy capacity, skip failing modules, and keep timeout retries disabled.
 
-The current production-quality target is 30 configured proxies with 15 scanner queue workers. With `SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1`, that leaves roughly 30 lease slots for 15 active workers before cooldowns, which favors cleaner proxy reputation over maximum throughput.
+The 8 GB / 4 dedicated vCPU starting profile uses 30 configured proxies and 20 workers:
+five reserved for email, five reserved for usernames, and ten shared workers
+preferring email. Either mode can use up to 15 workers when alone. Each run stages
+remaining work durably and dispatches at most 15 unfinished jobs; replacements go
+to the FIFO tail so large runs cannot enqueue thousands ahead of newcomers.
+Cooldowns can still reduce proxy capacity below 20. See
+[`deploy/scanner-queues.md`](../deploy/scanner-queues.md) for the migration,
+Supervisor configuration, safe cutover, verification and rollback procedure.
 
 ## General HTTP Settings
 
@@ -53,7 +67,12 @@ The current production-quality target is 30 configured proxies with 15 scanner q
 
 | Setting | What it does | Recommended | Why |
 | --- | --- | --- | --- |
-| `SCANNER_ASYNC_QUEUE` | Queue name used for scanner validator jobs. | `scanner` in production; `default` is acceptable locally. | A dedicated queue lets scanner workers be scaled and restarted without mixing with unrelated app jobs. |
+| `SCANNER_ASYNC_QUEUE` | Legacy queue included in combined ops snapshots and used as a routing fallback. | `scanner` | New email/username jobs use their mode queues. Keep legacy workers draining during cutover. |
+| `SCANNER_QUEUE_CONNECTION` | Laravel connection for scanner jobs. | `database` | Fair scheduling requires the same named DB connection as the scan tables. The sync driver bypasses staging locally. |
+| `SCANNER_EMAIL_QUEUE` / `SCANNER_USERNAME_QUEUE` | Dedicated mode queue names. | `scanner-email` / `scanner-username` | Must match Supervisor. Do not change names while staged runs remain active. |
+| `SCANNER_FAIR_SCHEDULING` | Persist tasks and bound each run's queue occupancy. | `true` | Disabling affects new runs only; existing staged scans still need the new code to drain. |
+| `SCANNER_EMAIL_RUN_WINDOW` / `SCANNER_USERNAME_RUN_WINDOW` | Maximum dispatched unfinished tasks per run. | `15` / `15` | Matches each mode's isolated capacity with reserved plus shared workers. Replacements append at the FIFO tail. |
+| `DB_QUEUE_RETRY_AFTER` | Seconds before a reserved database job is eligible for redelivery. | `120` | Must exceed both the job timeout and the worker fallback timeout, with margin. |
 | `SCANNER_ASYNC_JOB_TIMEOUT` | Laravel job timeout for one validator job. | `60` | Gives enough room for proxy lease wait plus one validator request and metadata enrichment, while still killing truly stuck jobs. Worker `--timeout` should be higher than this, usually by 10-15 seconds. |
 | `SCANNER_ASYNC_JOB_TRIES` | Number of times Laravel retries an entire validator job. | `1` | Whole-job retries multiply traffic, proxy pressure, and duplicate failure risk. Module-level proxy retry is already handled separately. |
 | `SCANNER_SYNC_RESULT_THRESHOLD` | Web controller threshold for deciding whether a planned scan should be async instead of immediate. | `12` | Small scans can feel instant; larger scans should go through the queue so the UI/API can poll progress. |

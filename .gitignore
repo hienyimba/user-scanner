@@ -10,7 +10,16 @@ node_modules/
 *.lock
 /docs
 /tests
+
 !/tests/
 /tests/*
 /user-maigret-main
 /user-scanner-py-sept-release
+/tests/Feature
+/tests
+
+# Keep the queue-scheduling regression suite visible without exposing local suites.
+!/tests/
+!/tests/Feature/
+/tests/Feature/*
+!/tests/Feature/FairScanSchedulingTest.php
