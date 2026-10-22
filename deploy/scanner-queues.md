@@ -146,13 +146,31 @@ until existing staged scans finish. Eager dispatch still routes by mode. For a
 full code rollback, block ingress and drain ALL new queues and task rows first;
 old code cannot replenish staged work. Do not drop the task table while active.
 
-Twenty workers fit below the configured 30-proxy / one-lease-per-proxy ceiling
+Twenty workers fit below the configured 60-proxy / one-lease-per-proxy ceiling
 before cooldowns; cooldowns can still reduce capacity below 20. Do not add workers
 or increase per-IP concurrency blindly. If memory/swap, CPU or database pressure
 appears, reduce the shared pool (e.g. 10 to 5), keeping the five reserved workers
 per mode, and reduce the per-run windows to 10 to match isolated capacity.
 This lowers concurrency but does not cure excess incoming load. Benchmark before
 increasing beyond this initial profile.
+
+The proxy inventory was expanded on 2026-10-22 to 60 endpoints (56 US, 4 GB),
+including ports 8031-8060. Existing credentials and primary/fallback assignments
+are unchanged: ports 8020 and 8019 remain fallback; 8007 and 8006 remain primary.
+A non-empty `SCANNER_PROXY_LIST` overrides the configured pool:
+remove an obsolete override or update it to include the intended endpoints.
+After deploying the config, run `php8.4 artisan config:cache` and
+`php8.4 artisan queue:restart`; already-created runs retain their saved proxy
+options, so verify the expanded pool with a fresh run. No worker count is
+automatically increased by this inventory change.
+
+Focused verification after the inventory refresh passed 52 tests and 2,085
+assertions across `ProxyPoolIntegrationTest`, `FairScanSchedulingTest`, and
+`XhamsterAgeGateTest` on local PHP 8.2. All 60 endpoint/IP/country/ASN records were
+also compared with the supplied inventory. The fallback test now explicitly
+asserts the existing two-fallback policy rather than expecting four. These are
+offline regression checks, not live connectivity or production load tests; the
+full suite was not rerun for this inventory-only change.
 
 ## Local verification
 
