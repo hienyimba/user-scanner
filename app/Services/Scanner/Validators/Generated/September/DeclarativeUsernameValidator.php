@@ -32,6 +32,12 @@ final class DeclarativeUsernameValidator extends BaseGeneratedValidator
         return (string) $this->definition['key'];
     }
 
+    public function supportsAsyncPilot(): bool
+    {
+        return in_array($this->definition['family'] ?? '', ['discourse', 'gitea', 'lemmy'], true)
+            && $this->requestMethod() === 'GET';
+    }
+
     public function category(): string
     {
         return (string) $this->definition['category'];

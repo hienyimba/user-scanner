@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner;
 
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
@@ -18,14 +19,14 @@ final class ProxyManagerService
     private array $proxies = [];
 
     /**
-     * @param string $rawList Multiline proxy list.
+     * @param  string  $rawList  Multiline proxy list.
      */
     public function loadFromText(string $rawList): void
     {
         $lines = preg_split('/\R/', $rawList) ?: [];
         $this->proxies = Collection::make($lines)
             ->map(static fn (string $line): string => trim($line))
-            ->filter(static fn (string $line): bool => $line !== '' && !str_starts_with($line, '#'))
+            ->filter(static fn (string $line): bool => $line !== '' && ! str_starts_with($line, '#'))
             ->values()
             ->all();
 
@@ -98,7 +99,7 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
+     * @param  array<int, string>  $excludeRaw
      * @return array{raw:string,proxy:string}|null
      */
     public function acquire(int $offset = 0, array $excludeRaw = []): ?array
@@ -107,7 +108,7 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
+     * @param  array<int, string>  $excludeRaw
      */
     public function acquirePreferred(string $preferredTier, int $offset = 0, array $excludeRaw = []): ?array
     {
@@ -120,7 +121,7 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
+     * @param  array<int, string>  $excludeRaw
      */
     private function acquireWithTierPreference(?string $preferredTier, int $offset, array $excludeRaw): ?array
     {
@@ -142,7 +143,7 @@ final class ProxyManagerService
                 return null;
             }
 
-            usleep($waitRetrySeconds * 1_000_000);
+            AsyncPilotRuntime::sleep($waitRetrySeconds);
         } while (true);
     }
 
@@ -153,6 +154,7 @@ final class ProxyManagerService
             $count = (int) Cache::get($this->activeCountCacheKey($key), 0);
             if ($count <= 1) {
                 Cache::forget($this->activeCountCacheKey($key));
+
                 return;
             }
 
@@ -191,7 +193,7 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
+     * @param  array<int, string>  $excludeRaw
      * @return array{raw:string,proxy:string}|null
      */
     private function attemptAcquire(int $offset, array $excludeRaw, ?string $preferredTier = null): ?array
@@ -234,7 +236,7 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<string, bool> $excluded
+     * @param  array<string, bool>  $excluded
      * @return array<int, array{raw:string,resolved:string,fingerprint:string}>
      */
     private function filterCandidatesByTier(string $tier, array $excluded): array
@@ -263,7 +265,7 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, array{raw:string,resolved:string,fingerprint:string}> $candidates
+     * @param  array<int, array{raw:string,resolved:string,fingerprint:string}>  $candidates
      * @return array<int, array{raw:string,resolved:string,fingerprint:string}>
      */
     private function rotateCandidates(array $candidates, int $offset): array
@@ -311,7 +313,7 @@ final class ProxyManagerService
             return $normalized;
         }
 
-        if (!empty($parts['user']) || !empty($parts['pass'])) {
+        if (! empty($parts['user']) || ! empty($parts['pass'])) {
             return $normalized;
         }
 
@@ -324,7 +326,7 @@ final class ProxyManagerService
 
         $scheme = (string) ($parts['scheme'] ?? 'http');
         $host = (string) ($parts['host'] ?? '');
-        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
 
         return sprintf(
             '%s://%s:%s@%s%s',
@@ -338,7 +340,7 @@ final class ProxyManagerService
 
     private function normalizeProxyString(string $proxy): string
     {
-        return preg_match('/^[a-z0-9]+:\/\//i', $proxy) ? $proxy : 'http://' . $proxy;
+        return preg_match('/^[a-z0-9]+:\/\//i', $proxy) ? $proxy : 'http://'.$proxy;
     }
 
     private function isCoolingDown(string $fingerprint): bool
@@ -366,31 +368,50 @@ final class ProxyManagerService
         $host = strtolower((string) ($parts['host'] ?? ''));
         $port = (int) ($parts['port'] ?? 0);
 
-        return sha1($host . ':' . $port);
+        return sha1($host.':'.$port);
     }
 
     private function activeCountCacheKey(string $fingerprint): string
     {
-        return 'scanner:proxy:active:' . $fingerprint;
+        return 'scanner:proxy:active:'.$fingerprint;
     }
 
     private function failureCountCacheKey(string $fingerprint): string
     {
-        return 'scanner:proxy:failures:' . $fingerprint;
+        return 'scanner:proxy:failures:'.$fingerprint;
     }
 
     private function cooldownCacheKey(string $fingerprint): string
     {
-        return 'scanner:proxy:cooldown:' . $fingerprint;
+        return 'scanner:proxy:cooldown:'.$fingerprint;
     }
 
     /**
      * @template T
-     * @param callable():T $callback
+     *
+     * @param  callable():T  $callback
      * @return T
      */
     private function withStateLock(callable $callback): mixed
     {
-        return Cache::lock(self::STATE_LOCK_KEY, 10)->block(5, $callback);
+        $lock = Cache::lock(self::STATE_LOCK_KEY, 10);
+        if (AsyncPilotRuntime::current() === null) {
+            return $lock->block(5, $callback);
+        }
+
+        $deadline = microtime(true) + 5;
+        while (! $lock->get()) {
+            if (microtime(true) >= $deadline) {
+                throw new LockTimeoutException;
+            }
+            // Match Laravel's 250ms lock retry without blocking the other
+            // requests in this process while another process owns the lock.
+            AsyncPilotRuntime::sleep(0.25);
+        }
+        try {
+            return $callback();
+        } finally {
+            $lock->release();
+        }
     }
 }

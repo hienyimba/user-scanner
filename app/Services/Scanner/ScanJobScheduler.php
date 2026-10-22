@@ -34,7 +34,21 @@ final class ScanJobScheduler
             (string) config('scanner.async.queue', 'scanner'),
             $this->queueFor('email'),
             $this->queueFor('username'),
+            ...(config('scanner.async.username_pilot.enabled', false)
+                ? [(string) config('scanner.async.username_pilot.queue')]
+                : []),
         ]));
+    }
+
+    public function queueForJob(RunValidatorJob $job): string
+    {
+        if (config('scanner.async.username_pilot.enabled', false)
+            && ($job->options['async_username_pilot'] ?? false) === true
+            && app(ScannerEngineService::class)->supportsAsyncPilot($job->mode, $job->validatorKey)) {
+            return (string) config('scanner.async.username_pilot.queue');
+        }
+
+        return $this->queueFor($job->mode);
     }
 
     public function usesFairScheduling(): bool
@@ -69,7 +83,7 @@ final class ScanJobScheduler
             foreach ($jobs as $job) {
                 $rows[] = [
                     'scan_run_id' => $runId,
-                    'queue' => $this->queueFor($job->mode),
+                    'queue' => $this->queueForJob($job),
                     // Shared options (including proxies) are stored once in scan_runs.
                     'payload' => json_encode([
                         'validator_key' => $job->validatorKey,

@@ -9,9 +9,9 @@ use App\DTO\ScanResult;
 final class ProxyExecutionPolicy
 {
     /**
-     * @param array<string, mixed> $options
-     * @param callable(?string): ScanResult $attempt
-     * @param callable(string): ScanResult $errorResult
+     * @param  array<string, mixed>  $options
+     * @param  callable(?string): ScanResult  $attempt
+     * @param  callable(string): ScanResult  $errorResult
      */
     public static function run(
         ProxyManagerService $proxyManager,
@@ -37,15 +37,18 @@ final class ProxyExecutionPolicy
             return $errorResult('No proxy capacity available from configured pool');
         }
 
-        $firstResult = $attempt($lease['proxy']);
-        if (!self::isRetryableProxyFailure($firstResult) || self::maxProxyRetries() < 1) {
-            self::finalizeLease($proxyManager, $lease['raw'], $firstResult);
+        try {
+            $firstResult = $attempt($lease['proxy']);
+            if (! self::isRetryableProxyFailure($firstResult) || self::maxProxyRetries() < 1) {
+                self::recordLeaseOutcome($proxyManager, $lease['raw'], $firstResult);
 
-            return $firstResult;
+                return $firstResult;
+            }
+            $proxyManager->reportFailure($lease['raw']);
+        } finally {
+            // Also release on exceptions or cooperative task cancellation.
+            $proxyManager->release($lease['raw']);
         }
-
-        $proxyManager->reportFailure($lease['raw']);
-        $proxyManager->release($lease['raw']);
 
         $retryLease = $proxyManager->tierOf($lease['raw']) === 'primary'
             ? $proxyManager->acquirePreferred('fallback', $offset + 1, [$lease['raw']])
@@ -54,21 +57,23 @@ final class ProxyExecutionPolicy
             return $firstResult;
         }
 
-        $retryResult = $attempt($retryLease['proxy']);
-        self::finalizeLease($proxyManager, $retryLease['raw'], $retryResult);
+        try {
+            $retryResult = $attempt($retryLease['proxy']);
+            self::recordLeaseOutcome($proxyManager, $retryLease['raw'], $retryResult);
 
-        return $retryResult;
+            return $retryResult;
+        } finally {
+            $proxyManager->release($retryLease['raw']);
+        }
     }
 
-    private static function finalizeLease(ProxyManagerService $proxyManager, string $rawProxy, ScanResult $result): void
+    private static function recordLeaseOutcome(ProxyManagerService $proxyManager, string $rawProxy, ScanResult $result): void
     {
         if (self::isRetryableProxyFailure($result)) {
             $proxyManager->reportFailure($rawProxy);
         } else {
             $proxyManager->reportSuccess($rawProxy);
         }
-
-        $proxyManager->release($rawProxy);
     }
 
     private static function maxProxyRetries(): int

@@ -6,6 +6,7 @@ namespace App\Services\Scanner;
 
 use App\Contracts\ValidatorContract;
 use App\DTO\ScanResult;
+use App\Services\Scanner\Validators\Generated\September\DeclarativeUsernameValidator;
 use Illuminate\Support\Arr;
 
 final class ScannerEngineService
@@ -194,7 +195,21 @@ final class ScannerEngineService
             ]);
         }
 
+        // Generated validators retain request diagnostics; concurrent targets
+        // must not overwrite each other's per-request state.
+        if (AsyncPilotRuntime::current() !== null) {
+            $validator = clone $validator;
+        }
+
         return $this->runValidator($validator, $target, $mode, $options);
+    }
+
+    public function supportsAsyncPilot(string $mode, string $key): bool
+    {
+        $validator = $this->resolveValidator($mode, $key);
+
+        return $mode === 'username' && $validator instanceof DeclarativeUsernameValidator
+            && $validator->supportsAsyncPilot();
     }
 
     /**
@@ -263,8 +278,10 @@ final class ScannerEngineService
      */
     private function runValidatorWithProxyPolicy(ValidatorContract $validator, string $target, string $mode, array $options): ScanResult
     {
+        $proxyManager = AsyncPilotRuntime::current() === null ? $this->proxyManager : clone $this->proxyManager;
+
         return ProxyExecutionPolicy::run(
-            proxyManager: $this->proxyManager,
+            proxyManager: $proxyManager,
             options: $options,
             offset: (int) Arr::get($options, 'proxy_offset', 0),
             attempt: fn (?string $proxy): ScanResult => $this->executeValidator($validator, $target, $mode, $options, $proxy),

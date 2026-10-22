@@ -33,6 +33,10 @@ final class QueuedScanService
 
         $preparedOptions = $this->prepareOptions($options);
         $fairScheduling = $this->scheduler->usesFairScheduling();
+        if (($preparedOptions['async_username_pilot'] ?? false) === true
+            && (app()->isProduction() || ! config('scanner.async.username_pilot.enabled', false) || ! $fairScheduling || $mode !== 'username')) {
+            throw new RuntimeException('The username async pilot must be explicitly enabled and use the fair database scheduler.');
+        }
         $plans = [];
         $expandedTargets = [];
         $selectedValidatorKeys = [];

@@ -210,3 +210,124 @@ Do not describe the full suite as green until those existing policy/test
 inconsistencies are resolved. No production migration, configuration change,
 worker restart or deployment was performed during local verification. No
 production p95 improvement has yet been measured.
+
+## Experimental async username pilot (not deployed)
+
+The Discourse, Gitea and Lemmy pilot is **off by default**. It requires both
+`SCANNER_USERNAME_ASYNC_PILOT=true` and the internal per-run option
+`async_username_pilot=true`. Production run creation and pilot workers explicitly
+reject activation. Normal runs, email jobs and every non-pilot validator retain
+their existing execution path. No public API/UI option or Supervisor pool was
+enabled by this change.
+
+Eligible tasks use `scanner-username-pilot`; the same durable fair scheduling
+window counts tasks across the ordinary and pilot queues. Existing skip flags,
+target delays, proxy retries, normalization, profile enrichment, result inserts
+and completion counters are reused. Each generated validator and each job's proxy
+list is isolated per Fiber. A shared cURL multi handler runs API and enrichment
+GETs concurrently. Proxy-capacity waits yield instead of freezing other probes.
+This pilot deliberately retains the existing per-result database transactions;
+it does not claim database batching gains.
+
+`SCANNER_USERNAME_ASYNC_CONCURRENCY=40` is a **global pilot slot budget**. Several
+small pilot processes may reserve slices of it, for example four processes at
+`--concurrency=10`, not four at 40. Reservations use shared cache locks; do not
+use the array/null cache in staging. Other legacy/email workers still share
+the same per-proxy lease limit. A crashed process can retain pilot reservations
+until their TTL expires. The cooperative job deadline cancels pending HTTP and
+lease waits but cannot interrupt synchronous CPU/database stalls like the normal
+worker's `pcntl` alarm. Hard-crash recovery and Linux/PHP8.4/MySQL load validation
+remain requirements before any production rollout.
+
+For an explicitly opted-in local/staging run, keep normal username workers
+running for non-pilot modules and start the pilot worker separately:
+
+```sh
+php artisan scanner:work-username-pilot --concurrency=10 --max-jobs=0 --stop-when-empty
+```
+
+An opted-in run can be created through `QueuedScanService::startRun` with the
+same target/category/module selection as before and option
+`['async_username_pilot' => true]`. No module list is shortened. Without a
+normal worker, non-pilot tasks will remain queued; without a pilot worker,
+opted-in pilot tasks will remain queued. Do not opt in runs casually. To stop
+the experiment, stop creating opted-in runs and drain **both** queues before
+disabling the flag. Never purge jobs or staged tasks.
+
+### Reproducible isolated benchmark
+
+Requires PHP/ext-curl/PDO SQLite and Node.js. It creates a new database/output
+directory under `storage/app`, binds the fixture server only to loopback, and
+blocks stray external HTTP. It does not read production scan data, use proxy
+credentials, or contact real module endpoints. Both arms execute original
+`RunValidatorJob` jobs and the same scheduler, with identical fixture payloads,
+delays, redirects, metadata follow-ups and global request concurrency. The
+baseline uses ordinary Laravel workers; the pilot uses fewer cooperative workers.
+Xdebug is disabled in child workers and worker startup is recorded separately.
+Recycling is disabled during these trials to isolate the executor comparison.
+
+```sh
+php -d xdebug.mode=off scripts/benchmark_async_username.php --concurrency=4 --pilot-workers=2 --rounds=20 --delay-ms=10
+```
+
+The report checks identical module coverage, canonical result hashes (excluding
+only latency/timestamps/row identities), request-trace hashes, concurrency peaks
+and settled tasks on **every** trial. It reports throughput, p50/p95, startup and
+summed worker peak PHP allocations (not aggregate RSS). For a valid comparison,
+do not run test suites or other benchmark arms alongside timed trials. A short
+smoke run can use `--rounds=1`. Raise concurrency only if the local machine has
+enough free memory for the baseline's one-PHP-process-per-slot model.
+
+Windows/SQLite and synthetic responses are not a production p95 forecast.
+SQLite worker transactions reserve writes before reads to avoid deferred-upgrade
+deadlocks; this is not a substitute for a MySQL staging benchmark. Fixture parity
+proves that the executor preserves existing semantics, not that every remote
+website is currently working or that existing parser behavior is infallible.
+
+### Pilot results recorded on 2026-10-22 (local only)
+
+Two clean runs reversed executor order, yielding 20 samples per arm at a
+16-slot cap. Each sample checked all 1,124 eligible modules and made the same
+1,468 fixture requests, including redirects and metadata follow-ups. Every
+canonical result hash and request-trace hash matched. Recycling was disabled
+and worker startup excluded from timed trials, equally in both arms.
+
+| Metric | Current executor | Async pilot |
+| --- | ---: | ---: |
+| PHP workers | 16 | 4 (4 slots each) |
+| Global request-slot cap | 16 | 16 |
+| p50 | 16.62 s | 11.80 s |
+| p95 (nearest rank) | 16.95 s | 12.18 s |
+| Pooled checks/second | 67.47 | 94.63 |
+| Checks/second per worker | 4.22 | 23.66 |
+| Sum of worker peak PHP allocations | 704 MB | 176 MB |
+
+This is 28.2% lower local p95, 40.2% greater total throughput, 5.61x throughput
+per PHP worker and 75% lower summed PHP allocations. These allocations are not
+aggregate RSS or total server memory. Observed fixture HTTP peaks were 5-7 for
+the baseline and 7-11 for the pilot, below the same configured cap of 16.
+
+The positive/negative fixture matrix covers all 1,124 bulk definitions. A mixed
+end-to-end scan also compared all 1,487 registered username modules, preserving
+every legacy module and stored result. The pilot suite passed **16 tests / 3,843
+assertions**. The final full suite ran **854 tests / 20,542 assertions**: **853
+passed**, with the previously recorded Dropbox expectation mismatch as the sole
+failure (`Skipped` expected, existing connector returns `Not Registered`). No
+email policy was changed to silence that unrelated failure. Pint, command
+registration, and diff checks passed.
+
+Evidence is under `storage/app/async-pilot-comparison-2026-10-22-34fab3/`
+(`report.html` and `report.json`), with links to both raw 10-sample-per-arm
+reports. The final JUnit report is `storage/app/async-pilot-final-full-suite.xml`.
+Reproduce the balanced comparison sequentially with:
+
+```sh
+php -d xdebug.mode=off scripts/benchmark_async_username.php --concurrency=16 --pilot-workers=4 --rounds=10 --delay-ms=10 --order=pilot-first
+php -d xdebug.mode=off scripts/benchmark_async_username.php --concurrency=16 --pilot-workers=4 --rounds=10 --delay-ms=10 --order=baseline-first
+```
+
+The 40-slot production profile, real proxy/site behavior and full production
+1,361-module p95 were **not** benchmarked. The test host did not have enough
+spare RAM for a safe 40-process reference arm. Linux/PHP8.4/MySQL staging checks
+and hard-timeout/crash recovery validation are still required. The pilot remains
+off by default, production activation is blocked, and nothing was deployed.

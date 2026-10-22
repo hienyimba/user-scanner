@@ -404,7 +404,7 @@ final class MetadataEnrichmentService
                 $request = $request->withOptions(['proxy' => $options['proxy']]);
             }
 
-            $response = $request->get($profileUrl);
+            $response = AsyncPilotRuntime::get($request, $profileUrl);
             if ($response->status() !== 200) {
                 return [];
             }
