@@ -14,7 +14,13 @@ final class ProfileMetadataExtractor
      */
     public function extractProfileHtmlMetadata(string $html, string $profileUrl): array
     {
-        $document = new DOMDocument();
+        $xhamster = new XhamsterProfileEvidence;
+        $target = $xhamster->targetFromUrl($profileUrl);
+        if ($target !== null) {
+            return $xhamster->inspect($html, $target)['metadata'];
+        }
+
+        $document = new DOMDocument;
         libxml_use_internal_errors(true);
         $loaded = $document->loadHTML($html);
         libxml_clear_errors();
@@ -94,7 +100,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<int, string>|string $value
+     * @param  array<int, string>|string  $value
      * @return array<int, string>
      */
     public function mergeStringList(array|string $existing, array|string $value): array
@@ -103,7 +109,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<int, string>|string $value
+     * @param  array<int, string>|string  $value
      * @return array<int, string>
      */
     public function mergeLinks(array|string $existing, array|string $value): array
@@ -118,6 +124,7 @@ final class ProfileMetadataExtractor
                         $merged[] = $part;
                     }
                 }
+
                 continue;
             }
 
@@ -137,16 +144,13 @@ final class ProfileMetadataExtractor
      */
     public function normalizeExternalLinks(mixed $value): array
     {
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return $this->mergeLinks([], is_string($value) ? $value : []);
         }
 
         return $this->mergeLinks([], $value);
     }
 
-    /**
-     * @return int|float|string
-     */
     public function extractMetricValue(string $value): int|float|string
     {
         $normalized = strtolower(trim(str_replace([',', ' '], '', $value)));
@@ -184,7 +188,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<int, string> $queries
+     * @param  array<int, string>  $queries
      */
     private function metaContent(DOMXPath $xpath, array $queries): ?string
     {
@@ -234,7 +238,7 @@ final class ProfileMetadataExtractor
                 continue;
             }
 
-            if (!str_starts_with($href, 'http://') && !str_starts_with($href, 'https://')) {
+            if (! str_starts_with($href, 'http://') && ! str_starts_with($href, 'https://')) {
                 continue;
             }
 
@@ -270,7 +274,7 @@ final class ProfileMetadataExtractor
             }
 
             $decoded = json_decode($payload, true);
-            if (!is_array($decoded)) {
+            if (! is_array($decoded)) {
                 continue;
             }
 
@@ -430,7 +434,7 @@ final class ProfileMetadataExtractor
         $seenPayloads = [];
 
         foreach ($nodes as $node) {
-            if (!$node instanceof \DOMElement) {
+            if (! $node instanceof \DOMElement) {
                 continue;
             }
 
@@ -441,12 +445,12 @@ final class ProfileMetadataExtractor
                 continue;
             }
 
-            if (!$this->isLikelyHydrationScript($type, $id, $payload)) {
+            if (! $this->isLikelyHydrationScript($type, $id, $payload)) {
                 continue;
             }
 
             $decoded = $this->decodeHydrationPayload($payload);
-            if (!is_array($decoded)) {
+            if (! is_array($decoded)) {
                 continue;
             }
 
@@ -457,7 +461,7 @@ final class ProfileMetadataExtractor
             $seenPayloads[$fingerprint] = true;
 
             foreach ($this->flattenHydrationNodes($decoded) as $candidate) {
-                if (!$this->isLikelyProfileNode($candidate)) {
+                if (! $this->isLikelyProfileNode($candidate)) {
                     continue;
                 }
 
@@ -482,23 +486,23 @@ final class ProfileMetadataExtractor
         $seenPayloads = [];
 
         foreach ($nodes as $node) {
-            if (!$node instanceof \DOMElement || !$node->hasAttributes()) {
+            if (! $node instanceof \DOMElement || ! $node->hasAttributes()) {
                 continue;
             }
 
             foreach ($node->attributes as $attribute) {
-                if (!$attribute instanceof \DOMAttr) {
+                if (! $attribute instanceof \DOMAttr) {
                     continue;
                 }
 
                 $name = strtolower(trim($attribute->name));
                 $value = trim((string) $attribute->value);
-                if (!$this->isLikelyHydrationAttribute($name, $value)) {
+                if (! $this->isLikelyHydrationAttribute($name, $value)) {
                     continue;
                 }
 
                 $decoded = $this->decodeHydrationPayload(html_entity_decode($value, ENT_QUOTES | ENT_HTML5));
-                if (!is_array($decoded)) {
+                if (! is_array($decoded)) {
                     continue;
                 }
 
@@ -509,7 +513,7 @@ final class ProfileMetadataExtractor
                 $seenPayloads[$fingerprint] = true;
 
                 foreach ($this->flattenHydrationNodes($decoded) as $candidate) {
-                    if (!$this->isLikelyProfileNode($candidate)) {
+                    if (! $this->isLikelyProfileNode($candidate)) {
                         continue;
                     }
 
@@ -598,7 +602,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed>|array<int, mixed> $decoded
+     * @param  array<string, mixed>|array<int, mixed>  $decoded
      * @return array<int, array<string, mixed>>
      */
     private function flattenHydrationNodes(array $decoded): array
@@ -611,11 +615,11 @@ final class ProfileMetadataExtractor
             $current = array_pop($stack);
             $visited++;
 
-            if (!is_array($current)) {
+            if (! is_array($current)) {
                 continue;
             }
 
-            if (!array_is_list($current)) {
+            if (! array_is_list($current)) {
                 $nodes[] = $current;
             }
 
@@ -630,7 +634,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
+     * @param  array<string, mixed>  $node
      */
     private function isLikelyProfileNode(array $node): bool
     {
@@ -650,7 +654,7 @@ final class ProfileMetadataExtractor
             'verified', 'isVerified', 'is_paid', 'is_premium', 'isPremium', 'is_private', 'isPrivate',
             'private', 'protected', 'locked', 'show_pro_badge', 'verified_type', 'jid', 'is_community', 'email', 'gender',
         ] as $key) {
-            if (!array_key_exists($key, $node) || $node[$key] === null || $node[$key] === '' || $node[$key] === []) {
+            if (! array_key_exists($key, $node) || $node[$key] === null || $node[$key] === '' || $node[$key] === []) {
                 continue;
             }
 
@@ -674,7 +678,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
+     * @param  array<string, mixed>  $node
      * @return array<string, mixed>
      */
     private function metadataFromHydrationNode(array $node): array
@@ -869,11 +873,11 @@ final class ProfileMetadataExtractor
 
     private function isLikelyHydrationAttribute(string $name, string $value): bool
     {
-        if ($value === '' || !str_starts_with($name, 'data-')) {
+        if ($value === '' || ! str_starts_with($name, 'data-')) {
             return false;
         }
 
-        if (!str_contains($value, '{') && !str_contains($value, '[') && !str_contains($value, '&quot;')) {
+        if (! str_contains($value, '{') && ! str_contains($value, '[') && ! str_contains($value, '&quot;')) {
             return false;
         }
 
@@ -892,14 +896,14 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param array<int, string> $keys
+     * @param  array<string, mixed>  $node
+     * @param  array<int, string>  $keys
      */
     private function firstScalar(array $node, array $keys): ?string
     {
         foreach ($keys as $key) {
             $value = $node[$key] ?? null;
-            if (!is_scalar($value)) {
+            if (! is_scalar($value)) {
                 continue;
             }
 
@@ -913,9 +917,8 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param array<int, string> $keys
-     * @return int|float|string|null
+     * @param  array<string, mixed>  $node
+     * @param  array<int, string>  $keys
      */
     private function firstMetric(array $node, array $keys): int|float|string|null
     {
@@ -930,7 +933,7 @@ final class ProfileMetadataExtractor
                 continue;
             }
 
-            if (!is_scalar($value)) {
+            if (! is_scalar($value)) {
                 continue;
             }
 
@@ -944,8 +947,8 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param array<int, string> $keys
+     * @param  array<string, mixed>  $node
+     * @param  array<int, string>  $keys
      * @return int|float|string|array<int, string>|null
      */
     private function firstMetricOrList(array $node, array $keys): int|float|string|array|null
@@ -961,7 +964,7 @@ final class ProfileMetadataExtractor
                 continue;
             }
 
-            if (!is_scalar($value)) {
+            if (! is_scalar($value)) {
                 continue;
             }
 
@@ -975,13 +978,13 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param array<int, string> $keys
+     * @param  array<string, mixed>  $node
+     * @param  array<int, string>  $keys
      */
     private function firstBoolean(array $node, array $keys): ?bool
     {
         foreach ($keys as $key) {
-            if (!array_key_exists($key, $node)) {
+            if (! array_key_exists($key, $node)) {
                 continue;
             }
 
@@ -1005,9 +1008,8 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param array<int, string> $keys
-     * @return int|string|null
+     * @param  array<string, mixed>  $node
+     * @param  array<int, string>  $keys
      */
     private function firstIdentifier(array $node, array $keys): int|string|null
     {
@@ -1020,8 +1022,8 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param array<int, string> $keys
+     * @param  array<string, mixed>  $node
+     * @param  array<int, string>  $keys
      */
     private function firstPrivacyFlag(array $node, array $keys): ?bool
     {
@@ -1031,7 +1033,7 @@ final class ProfileMetadataExtractor
         }
 
         foreach ($keys as $key) {
-            if (!array_key_exists($key, $node) || !is_scalar($node[$key])) {
+            if (! array_key_exists($key, $node) || ! is_scalar($node[$key])) {
                 continue;
             }
 
@@ -1048,8 +1050,8 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
-     * @param array<int, string> $keys
+     * @param  array<string, mixed>  $node
+     * @param  array<int, string>  $keys
      */
     private function firstDate(array $node, array $keys): ?string
     {
@@ -1062,7 +1064,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
+     * @param  array<string, mixed>  $node
      */
     private function resolveHydrationLocation(array $node): ?string
     {
@@ -1109,18 +1111,17 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<int, string> $labels
-     * @return int|float|string|null
+     * @param  array<int, string>  $labels
      */
     private function extractNamedMetric(string $searchText, array $labels): int|float|string|null
     {
         $metricPattern = '([0-9][0-9,\.]*(?:\s?[kmb])?)';
 
         foreach ($labels as $label) {
-            if (preg_match('/' . $metricPattern . '[ \t]+' . $label . '\b/i', $searchText, $match) === 1) {
+            if (preg_match('/'.$metricPattern.'[ \t]+'.$label.'\b/i', $searchText, $match) === 1) {
                 return $this->extractMetricValue($match[1]);
             }
-            if (preg_match('/\b' . $label . '\s*[:\-]?\s*' . $metricPattern . '\b/i', $searchText, $match) === 1) {
+            if (preg_match('/\b'.$label.'\s*[:\-]?\s*'.$metricPattern.'\b/i', $searchText, $match) === 1) {
                 return $this->extractMetricValue($match[1]);
             }
         }
@@ -1129,7 +1130,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<int, string> $queries
+     * @param  array<int, string>  $queries
      */
     private function extractDateValue(DOMXPath $xpath, array $queries): ?string
     {
@@ -1142,7 +1143,7 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<int, string> $keywords
+     * @param  array<int, string>  $keywords
      */
     private function extractContextualDate(DOMXPath $xpath, array $keywords): ?string
     {
@@ -1154,7 +1155,7 @@ final class ProfileMetadataExtractor
         foreach ($nodes as $node) {
             $context = strtolower(trim((string) ($node->parentNode?->textContent ?? $node->textContent)));
             foreach ($keywords as $keyword) {
-                if (!str_contains($context, $keyword)) {
+                if (! str_contains($context, $keyword)) {
                     continue;
                 }
 
@@ -1174,8 +1175,8 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $metadata
-     * @param array<string, mixed> $newMetadata
+     * @param  array<string, mixed>  $metadata
+     * @param  array<string, mixed>  $newMetadata
      * @return array<string, mixed>
      */
     private function mergeExtractedMetadata(array $metadata, array $newMetadata): array
@@ -1187,11 +1188,13 @@ final class ProfileMetadataExtractor
 
             if ($key === 'external_links') {
                 $metadata[$key] = $this->mergeLinks($metadata[$key] ?? [], $value);
+
                 continue;
             }
 
             if ($key === 'sources') {
                 $metadata[$key] = $this->mergeStringList($metadata[$key] ?? [], $value);
+
                 continue;
             }
 
@@ -1204,13 +1207,13 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<string, mixed> $node
+     * @param  array<string, mixed>  $node
      */
     private function resolveHydrationAvatarUrl(array $node): ?string
     {
         foreach (['avatar', 'photo', 'picture', 'image'] as $key) {
             $value = $node[$key] ?? null;
-            if (!is_array($value)) {
+            if (! is_array($value)) {
                 continue;
             }
 
@@ -1220,7 +1223,7 @@ final class ProfileMetadataExtractor
             }
 
             foreach (['thumbnails', 'urls', 'images'] as $nestedKey) {
-                if (!is_array($value[$nestedKey] ?? null)) {
+                if (! is_array($value[$nestedKey] ?? null)) {
                     continue;
                 }
 
@@ -1244,13 +1247,13 @@ final class ProfileMetadataExtractor
             return $link !== '' ? $link : null;
         }
 
-        if (!is_array($value)) {
+        if (! is_array($value)) {
             return null;
         }
 
         foreach (['url', 'href', 'link', 'website', 'website_url', 'value'] as $key) {
             $candidate = $value[$key] ?? null;
-            if (!is_scalar($candidate)) {
+            if (! is_scalar($candidate)) {
                 continue;
             }
 
@@ -1264,14 +1267,14 @@ final class ProfileMetadataExtractor
     }
 
     /**
-     * @param array<int|string, mixed> $values
+     * @param  array<int|string, mixed>  $values
      * @return array<int, string>
      */
     private function normalizeScalarList(array $values): array
     {
         $normalized = [];
         foreach ($values as $value) {
-            if (!is_scalar($value)) {
+            if (! is_scalar($value)) {
                 continue;
             }
 

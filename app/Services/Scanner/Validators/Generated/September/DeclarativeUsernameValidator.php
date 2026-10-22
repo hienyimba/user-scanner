@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Scanner\Validators\Generated\September;
 
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
+use App\Services\Scanner\XhamsterProfileEvidence;
 use DOMDocument;
 use DOMXPath;
 use GuzzleHttp\Cookie\CookieJar;
@@ -135,6 +136,9 @@ final class DeclarativeUsernameValidator extends BaseGeneratedValidator
 
     protected function parseConnectorResponse(Response $response, string $target): array
     {
+        if ($this->key() === 'xhamster') {
+            return $this->parseXhamster($response, $target);
+        }
         $json = $this->decodeJson($response);
 
         return match ((string) ($this->definition['family'] ?? '')) {
@@ -161,6 +165,10 @@ final class DeclarativeUsernameValidator extends BaseGeneratedValidator
     {
         if ($status !== 'Taken') {
             return [];
+        }
+
+        if ($this->key() === 'xhamster') {
+            return app(XhamsterProfileEvidence::class)->inspect($response->body(), $target)['metadata'];
         }
 
         $json = $this->decodeJson($response);
@@ -190,6 +198,50 @@ final class DeclarativeUsernameValidator extends BaseGeneratedValidator
             'matrix' => $this->matrixMetadata($json),
             default => [],
         };
+    }
+
+    protected function detectBlockedOrChallenged(Response $response): ?array
+    {
+        $blocked = parent::detectBlockedOrChallenged($response);
+        if ($this->key() !== 'xhamster' || ! in_array($response->status(), [200, 404], true)) {
+            return $blocked;
+        }
+
+        $evidence = app(XhamsterProfileEvidence::class)->inspect($response->body(), '');
+        if ($blocked !== null && ! str_contains($blocked[1], 'regional age-verification wall')) {
+            return $blocked;
+        }
+        if ($evidence['status'] !== 'Error') {
+            return null;
+        }
+        if ($evidence['age_gate']) {
+            // The existing policy retries an IP block on one alternate proxy.
+            return ['Error', 'xhamster: regional IP block (age-verification wall); account existence unknown'];
+        }
+
+        return $blocked;
+    }
+
+    /** @return array{0:string,1:string} */
+    private function parseXhamster(Response $response, string $target): array
+    {
+        if (! in_array($response->status(), [200, 404], true)) {
+            return ['Error', 'Unexpected Xhamster status: '.$response->status()];
+        }
+        $inspector = app(XhamsterProfileEvidence::class);
+        $effectiveUrl = (string) ($response->effectiveUri() ?? '');
+        if ($effectiveUrl !== '' && strcasecmp($inspector->targetFromUrl($effectiveUrl) ?? '', $target) !== 0) {
+            return ['Error', 'Xhamster redirected away from the requested user profile'];
+        }
+        $evidence = $inspector->inspect($response->body(), $target);
+        if ($evidence['status'] === 'Available') {
+            return ['Available', 'Xhamster explicitly reports user not found'];
+        }
+        if ($response->status() === 200 && $evidence['status'] === 'Taken') {
+            return ['Taken', $evidence['age_gate'] ? 'Profile confirmed by server page type; age gate hides profile details' : ''];
+        }
+
+        return ['Error', 'Xhamster response lacked verified profile or user-not-found evidence'];
     }
 
     /** @return array{0:string,1:string} */

@@ -13,11 +13,10 @@ final class MetadataEnrichmentService
 {
     public function __construct(
         private readonly ProfileMetadataExtractor $profileMetadataExtractor,
-    ) {
-    }
+    ) {}
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      */
     public function enrich(ScanResult $result, ValidatorContract $validator, array $options = []): ScanResult
     {
@@ -38,7 +37,8 @@ final class MetadataEnrichmentService
             $metadata['sources'] = $this->mergeStringList($metadata['sources'] ?? [], ['legacy_extra']);
         }
 
-        if ($normalizedStatus === 'found' && $result->mode === 'username' && $profileUrl !== null && $this->shouldFetchProfileHtml($options)) {
+        $xhamsterDetailsHidden = $platform === 'xhamster' && ($result->metadata['age_gate_present'] ?? false) === true;
+        if ($normalizedStatus === 'found' && $result->mode === 'username' && $profileUrl !== null && ! $xhamsterDetailsHidden && $this->shouldFetchProfileHtml($options)) {
             $fetchedMetadata = $this->fetchProfileMetadata($profileUrl, $options);
             $metadata = $this->mergeMetadata($metadata, $fetchedMetadata);
         }
@@ -76,7 +76,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      * @return array<string, mixed>
      */
     private function seedMetadata(array $metadata): array
@@ -151,7 +151,7 @@ final class MetadataEnrichmentService
 
     private function resolveTemplateCandidate(mixed $candidate, string $target): ?string
     {
-        if (!is_string($candidate) || trim($candidate) === '') {
+        if (! is_string($candidate) || trim($candidate) === '') {
             return null;
         }
 
@@ -174,13 +174,13 @@ final class MetadataEnrichmentService
         }
 
         $parsed = parse_url($candidate);
-        if (!is_array($parsed)) {
+        if (! is_array($parsed)) {
             return null;
         }
 
         $scheme = strtolower((string) ($parsed['scheme'] ?? ''));
         $host = trim((string) ($parsed['host'] ?? ''));
-        if (!in_array($scheme, ['http', 'https'], true) || $host === '') {
+        if (! in_array($scheme, ['http', 'https'], true) || $host === '') {
             return null;
         }
 
@@ -190,7 +190,7 @@ final class MetadataEnrichmentService
 
         if ($requireTargetEvidence) {
             $targetLower = strtolower($target);
-            if ($targetLower === '' || (!str_contains($hostLower, $targetLower) && !str_contains($path, $targetLower) && !str_contains($query, $targetLower))) {
+            if ($targetLower === '' || (! str_contains($hostLower, $targetLower) && ! str_contains($path, $targetLower) && ! str_contains($query, $targetLower))) {
                 return null;
             }
         }
@@ -201,13 +201,13 @@ final class MetadataEnrichmentService
             }
         }
 
-        $url = $scheme . '://' . $host;
+        $url = $scheme.'://'.$host;
         if (isset($parsed['port']) && is_int($parsed['port'])) {
-            $url .= ':' . $parsed['port'];
+            $url .= ':'.$parsed['port'];
         }
         $url .= (string) ($parsed['path'] ?? '');
         if (($parsed['query'] ?? '') !== '') {
-            $url .= '?' . $parsed['query'];
+            $url .= '?'.$parsed['query'];
         }
 
         return $url;
@@ -276,7 +276,7 @@ final class MetadataEnrichmentService
         $pairs = [];
         foreach (preg_split('/\R/', $extra) ?: [] as $line) {
             $line = trim($line);
-            if ($line === '' || !str_contains($line, ':')) {
+            if ($line === '' || ! str_contains($line, ':')) {
                 continue;
             }
 
@@ -292,8 +292,8 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
-     * @param array<string, string> $legacyPairs
+     * @param  array<string, mixed>  $metadata
+     * @param  array<string, string>  $legacyPairs
      * @return array<string, mixed>
      */
     private function mergeLegacyMetadata(array $metadata, array $legacyPairs): array
@@ -327,7 +327,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      * @return array<string, mixed>
      */
     private function mergeStatsString(array $metadata, string $value): array
@@ -346,8 +346,8 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
-     * @param array<string, mixed> $newMetadata
+     * @param  array<string, mixed>  $metadata
+     * @param  array<string, mixed>  $newMetadata
      * @return array<string, mixed>
      */
     private function mergeMetadata(array $metadata, array $newMetadata): array
@@ -355,6 +355,7 @@ final class MetadataEnrichmentService
         foreach ($newMetadata as $key => $value) {
             if (in_array($key, ['blocked_metadata_fields', 'sensitive_fields'], true)) {
                 $metadata[$key] = $this->mergeStringList([], is_array($value) ? $value : []);
+
                 continue;
             }
 
@@ -364,11 +365,13 @@ final class MetadataEnrichmentService
 
             if ($key === 'external_links') {
                 $metadata[$key] = $this->mergeLinks($metadata[$key] ?? [], $value);
+
                 continue;
             }
 
             if (in_array($key, ['sources', 'evidence'], true)) {
                 $metadata[$key] = $this->mergeStringList($metadata[$key] ?? [], $value);
+
                 continue;
             }
 
@@ -381,7 +384,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $options
+     * @param  array<string, mixed>  $options
      * @return array<string, mixed>
      */
     private function fetchProfileMetadata(string $profileUrl, array $options): array
@@ -397,7 +400,7 @@ final class MetadataEnrichmentService
                     'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 ]);
 
-            if (!empty($options['proxy']) && is_string($options['proxy'])) {
+            if (! empty($options['proxy']) && is_string($options['proxy'])) {
                 $request = $request->withOptions(['proxy' => $options['proxy']]);
             }
 
@@ -425,7 +428,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<int, string>|string $value
+     * @param  array<int, string>|string  $value
      * @return array<int, string>
      */
     private function mergeLinks(array|string $existing, array|string $value): array
@@ -434,7 +437,6 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param mixed $value
      * @return array<int, string>
      */
     private function normalizeExternalLinks(mixed $value): array
@@ -442,9 +444,6 @@ final class MetadataEnrichmentService
         return $this->profileMetadataExtractor->normalizeExternalLinks($value);
     }
 
-    /**
-     * @return int|float|string
-     */
     private function extractMetricValue(string $value): int|float|string
     {
         return $this->profileMetadataExtractor->extractMetricValue($value);
@@ -478,7 +477,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      */
     private function calculateConfidence(string $normalizedStatus, ?string $profileUrl, array $metadata): ?float
     {
@@ -491,7 +490,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      */
     private function foundConfidence(?string $profileUrl, array $metadata): float
     {
@@ -543,7 +542,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      * @return array<int, string>
      */
     private function buildEvidence(ScanResult $result, ?string $profileUrl, array $metadata): array
@@ -610,7 +609,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<string, mixed> $metadata
+     * @param  array<string, mixed>  $metadata
      */
     private function determineObservedMetadataLevel(string $normalizedStatus, ?string $profileUrl, array $metadata): int
     {
@@ -682,7 +681,7 @@ final class MetadataEnrichmentService
     }
 
     /**
-     * @param array<int, string>|string $value
+     * @param  array<int, string>|string  $value
      * @return array<int, string>
      */
     private function mergeStringList(array|string $existing, array|string $value): array
