@@ -4,32 +4,47 @@ declare(strict_types=1);
 
 namespace App\Services\Scanner;
 
+use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 
 final class ProxyManagerService
 {
-    private const STATE_LOCK_KEY = 'scanner:proxy-manager:lock';
+    // Drain counter-based workers before deploying this owner-tagged protocol.
+    private const LEASE_PREFIX = 'scanner:proxy:v2:lease:';
 
     private int $index = 0;
 
     /** @var array<int, string> */
     private array $proxies = [];
 
+    /** @var array<string, array<string, array{lock:Lock,expires:int}>> */
+    private array $ownedLeases = [];
+
+    private array $candidates = [];
+
     /**
-     * @param string $rawList Multiline proxy list.
+     * @param  string  $rawList  Multiline proxy list.
      */
     public function loadFromText(string $rawList): void
     {
         $lines = preg_split('/\R/', $rawList) ?: [];
         $this->proxies = Collection::make($lines)
             ->map(static fn (string $line): string => trim($line))
-            ->filter(static fn (string $line): bool => $line !== '' && !str_starts_with($line, '#'))
+            ->filter(static fn (string $line): bool => $line !== '' && ! str_starts_with($line, '#'))
             ->values()
             ->all();
 
         $this->index = 0;
+        $this->candidates = [];
+        foreach ($this->proxies as $raw) {
+            $fingerprint = $this->proxyFingerprint($raw);
+            $this->candidates[$fingerprint] = [
+                'raw' => $raw, 'fingerprint' => $fingerprint,
+                'resolved' => $this->resolveProxyUrl($raw), 'tier' => $this->tierOf($raw),
+            ];
+        }
     }
 
     public function next(): ?string
@@ -85,8 +100,7 @@ final class ProxyManagerService
             }
         }
 
-        $this->proxies = array_values($working);
-        $this->index = 0;
+        $this->loadFromText(implode(PHP_EOL, $working));
 
         return count($this->proxies);
     }
@@ -98,8 +112,8 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
-     * @return array{raw:string,proxy:string}|null
+     * @param  array<int, string>  $excludeRaw
+     * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
     public function acquire(int $offset = 0, array $excludeRaw = []): ?array
     {
@@ -107,7 +121,8 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
+     * @param  array<int, string>  $excludeRaw
+     * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
     public function acquirePreferred(string $preferredTier, int $offset = 0, array $excludeRaw = []): ?array
     {
@@ -120,7 +135,7 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
+     * @param  array<int, string>  $excludeRaw
      */
     private function acquireWithTierPreference(?string $preferredTier, int $offset, array $excludeRaw): ?array
     {
@@ -133,7 +148,7 @@ final class ProxyManagerService
         $deadline = microtime(true) + $waitTimeoutSeconds;
 
         do {
-            $lease = $this->withStateLock(fn (): ?array => $this->attemptAcquire($offset, $excludeRaw, $preferredTier));
+            $lease = $this->attemptAcquire($offset, $excludeRaw, $preferredTier);
             if ($lease !== null) {
                 return $lease;
             }
@@ -142,27 +157,29 @@ final class ProxyManagerService
                 return null;
             }
 
-            usleep($waitRetrySeconds * 1_000_000);
+            usleep((int) (min($waitRetrySeconds, max(0, $deadline - microtime(true))) * 1_000_000));
         } while (true);
     }
 
-    public function release(string $rawProxy): void
+    public function release(string $rawProxy, ?string $token = null): void
     {
-        $this->withStateLock(function () use ($rawProxy): void {
-            $key = $this->proxyFingerprint($rawProxy);
-            $count = (int) Cache::get($this->activeCountCacheKey($key), 0);
-            if ($count <= 1) {
-                Cache::forget($this->activeCountCacheKey($key));
-                return;
-            }
-
-            Cache::put($this->activeCountCacheKey($key), $count - 1, now()->addMinutes(10));
-        });
+        $key = $this->proxyFingerprint($rawProxy);
+        $token ??= array_key_first($this->ownedLeases[$key] ?? []);
+        $owned = $token !== null ? ($this->ownedLeases[$key][$token] ?? null) : null;
+        if ($owned === null) {
+            return;
+        }
+        // Late release after expiry cannot delete a replacement owner's lease.
+        $owned['lock']->release();
+        unset($this->ownedLeases[$key][$token]);
+        if ($this->ownedLeases[$key] === []) {
+            unset($this->ownedLeases[$key]);
+        }
     }
 
     public function reportSuccess(string $rawProxy): void
     {
-        $this->withStateLock(function () use ($rawProxy): void {
+        $this->withHealthLock($rawProxy, function () use ($rawProxy): void {
             $key = $this->proxyFingerprint($rawProxy);
             Cache::forget($this->failureCountCacheKey($key));
         });
@@ -170,7 +187,7 @@ final class ProxyManagerService
 
     public function reportFailure(string $rawProxy): void
     {
-        $this->withStateLock(function () use ($rawProxy): void {
+        $this->withHealthLock($rawProxy, function () use ($rawProxy): void {
             $key = $this->proxyFingerprint($rawProxy);
             $threshold = max(1, (int) config('scanner.proxies.behavior.failure_threshold', 2));
             $failures = (int) Cache::get($this->failureCountCacheKey($key), 0) + 1;
@@ -191,8 +208,8 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<int, string> $excludeRaw
-     * @return array{raw:string,proxy:string}|null
+     * @param  array<int, string>  $excludeRaw
+     * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
     private function attemptAcquire(int $offset, array $excludeRaw, ?string $preferredTier = null): ?array
     {
@@ -209,24 +226,43 @@ final class ProxyManagerService
             default => ['primary', 'fallback'],
         };
 
+        // Batch-read health without a pool-wide mutex. Each slot claim is an
+        // independent atomic cache lock, even on the database cache driver.
+        $healthKeys = array_map(fn (array $candidate): string => $this->cooldownCacheKey($candidate['fingerprint']), $this->candidates);
+        $cooldowns = $healthKeys !== [] ? Cache::many(array_values($healthKeys)) : [];
+        $ttl = max(30, (int) config('scanner.async.job_timeout', 60) + 30,
+            (int) config('scanner.proxies.behavior.lease_seconds', 90));
+        $now = now()->getTimestamp();
+        foreach ($this->ownedLeases as $fingerprint => $leases) {
+            foreach ($leases as $token => $owned) {
+                if ($owned['expires'] <= $now) {
+                    unset($this->ownedLeases[$fingerprint][$token]);
+                }
+            }
+            if (($this->ownedLeases[$fingerprint] ?? []) === []) {
+                unset($this->ownedLeases[$fingerprint]);
+            }
+        }
+
         foreach ($tierOrder as $tier) {
             foreach ($grouped[$tier] as $candidate) {
                 $fingerprint = $candidate['fingerprint'];
-                if ($this->isCoolingDown($fingerprint)) {
+                if ((int) ($cooldowns[$this->cooldownCacheKey($fingerprint)] ?? 0) > $now) {
                     continue;
                 }
 
-                $activeCount = (int) Cache::get($this->activeCountCacheKey($fingerprint), 0);
-                if ($activeCount >= $maxConcurrentPerProxy) {
-                    continue;
+                for ($slot = 0; $slot < $maxConcurrentPerProxy; $slot++) {
+                    $lock = Cache::lock(self::LEASE_PREFIX.$fingerprint.':'.$slot, $ttl);
+                    if (! $lock->get()) {
+                        continue;
+                    }
+                    $token = $lock->owner();
+                    $expires = now()->getTimestamp() + $ttl;
+                    $this->ownedLeases[$fingerprint][$token] = ['lock' => $lock, 'expires' => $expires];
+
+                    return ['raw' => $candidate['raw'], 'proxy' => $candidate['resolved'],
+                        'token' => $token, 'expires' => $expires];
                 }
-
-                Cache::put($this->activeCountCacheKey($fingerprint), $activeCount + 1, now()->addMinutes(10));
-
-                return [
-                    'raw' => $candidate['raw'],
-                    'proxy' => $candidate['resolved'],
-                ];
             }
         }
 
@@ -234,36 +270,30 @@ final class ProxyManagerService
     }
 
     /**
-     * @param array<string, bool> $excluded
+     * @param  array<string, bool>  $excluded
      * @return array<int, array{raw:string,resolved:string,fingerprint:string}>
      */
     private function filterCandidatesByTier(string $tier, array $excluded): array
     {
         $candidates = [];
-        foreach ($this->proxies as $rawProxy) {
-            $fingerprint = $this->proxyFingerprint($rawProxy);
+        foreach ($this->candidates as $fingerprint => $candidate) {
             if (isset($excluded[$fingerprint])) {
                 continue;
             }
 
-            $proxyConfig = $this->configuredPoolEntry($rawProxy);
-            $candidateTier = (string) ($proxyConfig['tier'] ?? 'primary');
+            $candidateTier = $candidate['tier'];
             if ($candidateTier !== $tier) {
                 continue;
             }
 
-            $candidates[] = [
-                'raw' => $rawProxy,
-                'resolved' => $this->resolveProxyUrl($rawProxy),
-                'fingerprint' => $fingerprint,
-            ];
+            $candidates[] = $candidate;
         }
 
         return $candidates;
     }
 
     /**
-     * @param array<int, array{raw:string,resolved:string,fingerprint:string}> $candidates
+     * @param  array<int, array{raw:string,resolved:string,fingerprint:string}>  $candidates
      * @return array<int, array{raw:string,resolved:string,fingerprint:string}>
      */
     private function rotateCandidates(array $candidates, int $offset): array
@@ -311,7 +341,7 @@ final class ProxyManagerService
             return $normalized;
         }
 
-        if (!empty($parts['user']) || !empty($parts['pass'])) {
+        if (! empty($parts['user']) || ! empty($parts['pass'])) {
             return $normalized;
         }
 
@@ -324,7 +354,7 @@ final class ProxyManagerService
 
         $scheme = (string) ($parts['scheme'] ?? 'http');
         $host = (string) ($parts['host'] ?? '');
-        $port = isset($parts['port']) ? ':' . $parts['port'] : '';
+        $port = isset($parts['port']) ? ':'.$parts['port'] : '';
 
         return sprintf(
             '%s://%s:%s@%s%s',
@@ -338,21 +368,7 @@ final class ProxyManagerService
 
     private function normalizeProxyString(string $proxy): string
     {
-        return preg_match('/^[a-z0-9]+:\/\//i', $proxy) ? $proxy : 'http://' . $proxy;
-    }
-
-    private function isCoolingDown(string $fingerprint): bool
-    {
-        $cooldownUntil = (int) Cache::get($this->cooldownCacheKey($fingerprint), 0);
-        if ($cooldownUntil <= now()->getTimestamp()) {
-            if ($cooldownUntil !== 0) {
-                Cache::forget($this->cooldownCacheKey($fingerprint));
-            }
-
-            return false;
-        }
-
-        return true;
+        return preg_match('/^[a-z0-9]+:\/\//i', $proxy) ? $proxy : 'http://'.$proxy;
     }
 
     private function proxyFingerprint(string $rawProxy): string
@@ -366,31 +382,38 @@ final class ProxyManagerService
         $host = strtolower((string) ($parts['host'] ?? ''));
         $port = (int) ($parts['port'] ?? 0);
 
-        return sha1($host . ':' . $port);
-    }
-
-    private function activeCountCacheKey(string $fingerprint): string
-    {
-        return 'scanner:proxy:active:' . $fingerprint;
+        return sha1($host.':'.$port);
     }
 
     private function failureCountCacheKey(string $fingerprint): string
     {
-        return 'scanner:proxy:failures:' . $fingerprint;
+        return 'scanner:proxy:failures:'.$fingerprint;
     }
 
     private function cooldownCacheKey(string $fingerprint): string
     {
-        return 'scanner:proxy:cooldown:' . $fingerprint;
+        return 'scanner:proxy:cooldown:'.$fingerprint;
     }
 
     /**
      * @template T
-     * @param callable():T $callback
+     *
+     * @param  callable():T  $callback
      * @return T
      */
-    private function withStateLock(callable $callback): mixed
+    private function withHealthLock(string $rawProxy, callable $callback): mixed
     {
-        return Cache::lock(self::STATE_LOCK_KEY, 10)->block(5, $callback);
+        $key = $this->proxyFingerprint($rawProxy);
+        $lock = Cache::lock('scanner:proxy:v2:health:'.$key, 5);
+        if (! $lock->get()) {
+            ScannerDiagnostics::event('health_update_skipped', 'proxy.health', ['proxy_id' => $key]);
+
+            return null;
+        }
+        try {
+            return $callback();
+        } finally {
+            $lock->release();
+        }
     }
 }

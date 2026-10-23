@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Providers;
 
 use App\Contracts\ValidatorContract;
+use App\Queue\ResilientDatabaseConnector;
 use App\Services\Scanner\MetadataAuditService;
 use App\Services\Scanner\MetadataBaselineValidationService;
 use App\Services\Scanner\MetadataCapabilityService;
@@ -22,6 +23,9 @@ final class ScannerServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
+        $this->callAfterResolving('queue', function ($manager): void {
+            $manager->addConnector('database', fn () => new ResilientDatabaseConnector($this->app['db']));
+        });
         $this->app->singleton(ProxyManagerService::class);
         $this->app->singleton(PatternExpanderService::class);
         $this->app->singleton(ProfileMetadataExtractor::class);

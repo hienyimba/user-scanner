@@ -723,6 +723,7 @@ return [
         'pool' => $structuredProxyPool,
         'behavior' => [
             'max_concurrent_per_proxy' => (int) env('SCANNER_PROXY_MAX_CONCURRENT_PER_IP', 1),
+            'lease_seconds' => (int) env('SCANNER_PROXY_LEASE_SECONDS', 90),
             'max_retry_per_module' => (int) env('SCANNER_PROXY_MAX_RETRY_PER_MODULE', 1),
             'retry_timeout_failures' => env('SCANNER_PROXY_RETRY_TIMEOUT_FAILURES', false),
             'failure_threshold' => (int) env('SCANNER_PROXY_FAILURE_THRESHOLD', 2),

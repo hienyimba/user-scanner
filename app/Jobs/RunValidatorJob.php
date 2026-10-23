@@ -8,6 +8,7 @@ use App\DTO\ScanResult;
 use App\Services\Scanner\ProxyExecutionPolicy;
 use App\Services\Scanner\ProxyManagerService;
 use App\Services\Scanner\ScanJobScheduler;
+use App\Services\Scanner\ScannerDiagnostics;
 use App\Services\Scanner\ScannerEngineService;
 use App\Support\ScanRunStore;
 use Illuminate\Bus\Queueable;
@@ -64,7 +65,14 @@ final class RunValidatorJob implements ShouldQueue
         try {
             $result = $this->runWithProxyPolicy($engine, $proxyManager);
         } catch (Throwable $e) {
-            $result = $this->errorResult($e->getMessage());
+            $result = $this->errorResult(ScannerDiagnostics::exception($e, 'validator.job', $this->diagnosticContext()));
+        }
+
+        if ($result->status === 'Error') {
+            if (trim($result->reason) === '') {
+                $result = $this->errorResult('Validator returned Error without a reason');
+            }
+            ScannerDiagnostics::event('validator_error', 'validator.result', $this->diagnosticContext() + ['message' => $result->reason]);
         }
 
         if ($this->scheduledTaskId !== null) {
@@ -80,15 +88,17 @@ final class RunValidatorJob implements ShouldQueue
             return;
         }
 
+        $reason = ScannerDiagnostics::exception($exception, 'queue.failed', $this->diagnosticContext());
+
         if ($this->scheduledTaskId !== null) {
-            app(ScanJobScheduler::class)->finish($this, app(ScanRunStore::class), $this->errorResult($exception->getMessage())->toArray());
+            app(ScanJobScheduler::class)->finish($this, app(ScanRunStore::class), $this->errorResult($reason)->toArray());
 
             return;
         }
 
         app(ScanRunStore::class)->appendFailedResult(
             $this->runId,
-            $this->errorResult($exception->getMessage())->toArray(),
+            $this->errorResult($reason)->toArray(),
             $this->targetIndex,
             $this->validatorIndex,
         );
@@ -106,6 +116,7 @@ final class RunValidatorJob implements ShouldQueue
             offset: $this->proxyOffset,
             attempt: fn (?string $proxy): ScanResult => $this->attemptValidator($engine, $proxy),
             errorResult: fn (string $reason): ScanResult => $this->errorResult($reason),
+            context: $this->diagnosticContext(),
         );
     }
 
@@ -122,8 +133,15 @@ final class RunValidatorJob implements ShouldQueue
                 ],
             );
         } catch (Throwable $e) {
-            return $this->errorResult($e->getMessage());
+            return $this->errorResult(ScannerDiagnostics::exception($e, 'validator.request', $this->diagnosticContext()));
         }
+    }
+
+    private function diagnosticContext(): array
+    {
+        return ['run_id' => $this->runId, 'mode' => $this->mode, 'module' => $this->validatorKey,
+            'target_hash' => hash_hmac('sha256', $this->target, (string) config('app.key', 'scanner')),
+            'redact_values' => [$this->target]];
     }
 
     private function errorResult(string $reason): ScanResult

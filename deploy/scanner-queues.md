@@ -210,3 +210,134 @@ Do not describe the full suite as green until those existing policy/test
 inconsistencies are resolved. No production migration, configuration change,
 worker restart or deployment was performed during local verification. No
 production p95 improvement has yet been measured.
+
+## Proxy lease cleanup and database-cache contention fix (2026-10-23)
+
+The proxy manager no longer holds one pool-wide database-cache mutex. It claims
+owner-tagged atomic locks per endpoint/slot, reads cooldowns in one batch and
+updates health under a short, non-blocking per-endpoint lock. The HTTP request is
+not serialized with other endpoints. Existing proxy tiers, retry rules, module
+classification and result logic are unchanged.
+
+Site-specific 403/429/challenge responses still get the configured per-module
+retry, but no longer quarantine a transport endpoint for unrelated sites. Actual
+proxy authentication/resolution failures still affect endpoint health. Existing
+cooldowns remain honored until their configured expiry; do not flush cache to
+erase them. The database queue connector also retries deadlocked reservation
+transactions up to five times before a handler starts. If those retries are
+exhausted, the unexecuted job remains available rather than becoming a terminal
+scanner Error. This does not increase HTTP retries or executed-job attempts.
+
+Cleanup is in `finally`, including thrown requests and failed health updates. A
+transient release error gets one retry; an unavailable cache is logged and the
+lease expires. Release checks its owner and cannot delete a replacement owner's
+lease. Default `SCANNER_PROXY_LEASE_SECONDS=90`; the effective lifetime is at
+least the configured scanner job timeout plus 30 seconds. All workers using the
+same proxy pool must use the same shared cache/prefix and concurrency settings.
+This does not coordinate with separate localhost or other-server caches.
+
+### Deployment and rollback boundary
+
+**Do not mix old counter-based workers and the new v2 lease workers.** A rolling
+`queue:restart` alone is not sufficient. No new migration or Redis service is
+required; Laravel's existing `cache_locks` table is used with database cache.
+
+1. Pause new scan creation upstream, including synchronous requests. Keep old
+   workers running to drain. Do not put Laravel in maintenance mode while relying
+   on normal workers to drain: maintenance mode can pause them.
+2. Verify these counts are zero, repeatedly, while ingress remains paused:
+
+   ```sql
+   SELECT COUNT(*) AS active_runs FROM scan_runs WHERE status IN ('queued', 'running');
+   SELECT COUNT(*) AS scanner_jobs FROM jobs
+     WHERE queue IN ('scanner', 'scanner-username', 'scanner-email');
+   SELECT COUNT(*) AS scanner_tasks FROM scan_run_tasks;
+   ```
+
+3. Stop every scanner worker group, including shared/legacy groups, using the
+   actual Supervisor group names. Confirm they are stopped, then install the
+   patch, including `ScannerDiagnostics.php` and both new `app/Queue/` classes.
+   Refresh Composer's optimized autoload files if used. Reload long-lived HTTP
+   workers/PHP-FPM and its OPcache as appropriate too, so synchronous requests
+   cannot retain v1 proxy code. Keep ingress paused.
+4. Keep `CACHE_STORE=database`, existing worker counts and existing proxy rules.
+   The new lease setting is optional because 90 seconds is the default. Rebuild
+   the Laravel configuration cache and start only the patched workers. Do not
+   clear the whole application cache or purge queues. Old v1 active-counter keys
+   are not used by v2 and may expire naturally after all old workers have stopped.
+5. Test one run of each mode, then a bounded mixed-mode burst. Inspect result
+   coverage, structured diagnostics and final queue/lease drain, not just the
+   `completed` status. Resume ingress gradually. A 55-worker localhost test is
+   not a capacity certification for a 4 GB / 2 vCPU production host.
+
+Rollback also requires pausing ingress, draining and stopping **all** patched
+workers before starting any old workers. Do not switch cache drivers/prefixes or
+force-delete lease rows while scans are active. Recover a stuck run explicitly
+rather than marking it complete or purging its remaining checks.
+
+### Diagnostics and repeatable tests
+
+Logs use the event `Scanner diagnostic`, with phase, run ID, mode, module,
+target HMAC, endpoint fingerprint and exception class where available. They do
+not attach exception objects, request options, raw targets, full URLs or proxy
+credentials. Empty exception messages get a class/phase fallback. Release and
+health failures do not overwrite successful account results. Result errors are
+also logged, so they are visible even when Laravel considers the job successful.
+
+```bash
+php -d xdebug.mode=off vendor/phpunit/phpunit/phpunit --do-not-cache-result \
+  tests/Feature/ProxyLeaseSafetyTest.php tests/Feature/ProxyPoolIntegrationTest.php
+```
+
+The live overlap harness is `scripts/test_proxy_overlap_live.php`. It requires
+the local Windows MariaDB runtime, runs a dedicated loopback-only database and
+55 regular synchronous workers, and sends real approved targets to service
+endpoints through the configured 60 proxies. It excludes all notifying email
+modules and redacts shareable reports. Its private database/log artifacts are
+not deployment files and must not be committed or published. Stop it gracefully
+and verify its worker/database helpers exit before another experiment. Worker
+counts can be lowered with `--username-workers=20 --email-workers=5`; changing
+burst size with `--usernames=1` changes the workload too, so timings from those
+profiles are not a worker-scaling A/B comparison. Its existing direct exceptions
+are Minecraft/Mix (username) and Adobe/Girlslife (email). They are explicitly
+recorded and are not silently rerouted through proxies by the test.
+
+### Verification recorded on 2026-10-23
+
+- Focused proxy/queue/fairness/dashboard/index gate: **53 tests, 1,711
+  assertions, all passing**. Covers thrown requests, health/release outages,
+  owner fencing, expiry, safe logs and reservation deadlock recovery.
+- Active application suite (deleted async suites excluded): **846 tests,
+  16,247 assertions, 13 failures**. All 13 reproduce with unmodified HEAD runtime
+  classes (`2c02ddd04928ed806be5fd586c4e0dd649d31b66`) in a separate 182-case
+  baseline check. They concern existing platform fixtures/URL expectations:
+  DeviantArt, Dropbox, Academia, Daily.dev, SourceForge, 500px, Reddit,
+  Stack Overflow, Instagram and Threads. They were not hidden or changed to
+  make this infrastructure patch pass; the whole suite is not green.
+- Two 55-worker stress bursts: **18,954 expected results**, no duplicates,
+  blank errors, proxy-capacity errors or SQL-lock result errors, and fully
+  drained queues/tasks/leases. However, one retry-limit error and many upstream
+  failures occurred; username scans returned only 8–14 hits. The early harness
+  also generated 12 synthetic Adobe/Girlslife errors by blocking their existing
+  direct requests. Those original results remain preserved and this profile
+  is **not** an all-modules accuracy/capacity pass.
+- Two corrected 25-worker controls (20 username-priority + 5 email workers),
+  each overlapping one full username scan and three silent-email scans:
+  **4,084 expected results**, zero blank/capacity/lock/retry-limit errors, zero
+  failed jobs or leftover leases, and 14–15 username hits. No positive/negative
+  verdict contradictions or stable identity changes were observed. Pastebin
+  timed out once; two successful rows had partial supplementary metadata.
+- Worker private-memory peaks were approximately **2,979–2,995 MiB at 55**
+  versus **1,328 MiB at 25**, excluding MariaDB/coordinator. These profiles use
+  different burst sizes and do not establish worker scaling or production p95.
+- All 60 proxies passed preflight and were exercised in every completed burst.
+  The local registry contained 1,487 username and 185 silent-email modules;
+  41 notifying email modules were excluded, and configured auto-skips retained.
+  Production ops skip flags were not imported. Upstream module errors remain;
+  integrity/ownership/redaction checks are not a claim that every service works.
+
+Shareable live reports are under `storage/app/proxy-overlap-20261023-*`, separate
+from private database/server artifacts. All temporary workers, samplers and
+database instances exited. No production deployment, restart or data mutation
+was performed. Do not treat the 55-worker stress profile as suitable sizing for
+the 4 GB / 2 vCPU host.

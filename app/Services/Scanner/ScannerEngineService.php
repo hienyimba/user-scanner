@@ -279,6 +279,9 @@ final class ScannerEngineService
                 'key' => $validator->key(),
             ]),
             fallbackWithoutProxyWhenPoolEmpty: true,
+            context: ['mode' => $mode, 'module' => $validator->key(),
+                'target_hash' => hash_hmac('sha256', $target, (string) config('app.key', 'scanner')),
+                'redact_values' => [$target]],
         );
     }
 
