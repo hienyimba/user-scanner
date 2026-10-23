@@ -6,7 +6,6 @@ namespace App\Services\Scanner\Validators\Generated;
 
 use App\Contracts\ValidatorContract;
 use App\DTO\ScanResult;
-use App\Services\Scanner\AsyncPilotRuntime;
 use App\Services\Scanner\ProfileMetadataExtractor;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -161,7 +160,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
         }
 
         if ($method === 'GET') {
-            $response = AsyncPilotRuntime::get($request, $url, $query);
+            $response = $request->get($url, $query);
             $this->rememberRequestDiagnostics($response, $options['proxy'] ?? null, $startedAt);
 
             return $response;

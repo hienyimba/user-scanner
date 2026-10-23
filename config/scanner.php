@@ -747,11 +747,6 @@ return [
         ],
         'job_timeout' => (int) env('SCANNER_ASYNC_JOB_TIMEOUT', 60),
         'job_tries' => (int) env('SCANNER_ASYNC_JOB_TRIES', 1),
-        'username_pilot' => [
-            'enabled' => (bool) env('SCANNER_USERNAME_ASYNC_PILOT', false),
-            'queue' => 'scanner-username-pilot',
-            'concurrency' => (int) env('SCANNER_USERNAME_ASYNC_CONCURRENCY', 40),
-        ],
         'sync_result_threshold' => (int) env('SCANNER_SYNC_RESULT_THRESHOLD', 12),
         'max_expected_results' => (int) env('SCANNER_MAX_EXPECTED_RESULTS', 5000),
         'poll_interval_ms' => (int) env('SCANNER_POLL_INTERVAL_MS', 2000),

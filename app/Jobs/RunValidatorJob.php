@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\DTO\ScanResult;
-use App\Services\Scanner\AsyncPilotRuntime;
 use App\Services\Scanner\ProxyExecutionPolicy;
 use App\Services\Scanner\ProxyManagerService;
 use App\Services\Scanner\ScanJobScheduler;
@@ -53,11 +52,6 @@ final class RunValidatorJob implements ShouldQueue
 
     public function handle(ScannerEngineService $engine, ProxyManagerService $proxyManager, ScanRunStore $store): void
     {
-        // Each Fiber may have a different saved proxy list. Lease state remains
-        // shared through Cache, but the in-process list must not be shared.
-        if (AsyncPilotRuntime::current() !== null) {
-            $proxyManager = clone $proxyManager;
-        }
         $scheduler = app(ScanJobScheduler::class);
         if ($this->scheduledTaskId !== null) {
             if (! $scheduler->start($this, $store)) {
