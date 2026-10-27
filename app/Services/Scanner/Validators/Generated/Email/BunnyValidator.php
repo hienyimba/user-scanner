@@ -68,10 +68,10 @@ final class BunnyValidator extends BaseGeneratedValidator
     protected function requestBody(string $target): array
     {
         return [
-            'AffiliateCode' => '9sa3wl8vst',
             'PowToken' => '39bbb876b0e4f380:e80448fecdf5d1a40fcabf2e20d79c',
             'Email' => $target,
-            'Password' => 'th3_knight_n3v3r_had_th3_st33l_h3rt_it_was_an_arm0r',
+            // Deliberately invalid; this must never be a viable signup request.
+            'Password' => '',
         ];
     }
 
@@ -81,22 +81,18 @@ final class BunnyValidator extends BaseGeneratedValidator
     }
 
     protected function parseConnectorResponse(Response $response, string $target): array
-{
-    if ($response->status() === 403) {
-        return ['Error', 'Caught by WAF/Mitigation (403)'];
+    {
+        if (!in_array($response->status(), [200, 400, 422], true)) {
+            return ['Error', 'Bunny registration validation returned HTTP '.$response->status().'; account status unknown'];
+        }
+        $data = $response->json();
+        $message = is_array($data) && is_string($data['Message'] ?? null) ? strtolower($data['Message']) : '';
+        $field = is_array($data) && is_string($data['Field'] ?? null) ? strtolower($data['Field']) : '';
+        if ($field === 'email' && str_contains($message, 'already in use')) {
+            return ['Registered', ''];
+        }
+        // Password policy rejection alone does not prove that email uniqueness
+        // was checked. A stale PoW token or an invalid email is not a verdict.
+        return ['Error', 'Bunny did not return explicit email-duplicate evidence; account status unknown'];
     }
-    if ($response->status() === 429) {
-        return ['Error', 'Rate limited (429)'];
-    }
-    $data = $response->json();
-    $message = strtolower((string) ($data['Message'] ?? ''));
-    $field = strtolower((string) ($data['Field'] ?? ''));
-    if (str_contains($message, 'already in use') || $field === 'email') {
-        return ['Registered', ''];
-    }
-    if (str_contains($message, 'passwords must have')) {
-        return ['Not Registered', ''];
-    }
-    return ['Error', 'Unexpected response structure: ' . substr((string) ($data['Message'] ?? ''), 0, 50)];
-}
 }

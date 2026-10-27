@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Scanner\Validators\Generated\Email;
 
 use App\DTO\ScanResult;
+use App\Services\Scanner\ScannerDiagnostics;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -38,6 +39,13 @@ final class MyanimelistValidator extends BaseGeneratedValidator
 
     public function check(string $target, array $options = []): ScanResult
     {
+        $startedAt = microtime(true);
+        $response = null;
+        $finish = function (string $status, string $reason = '') use ($target, $options, $startedAt, &$response): ScanResult {
+            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(),
+                $status, ScannerDiagnostics::redact($reason, [$target]), mode: $this->mode(), key: $this->key(),
+                metadata: $this->mergeRequestDiagnostics([], $options, $response, $startedAt));
+        };
         try {
             $request = Http::timeout(7)
                 ->withOptions([
@@ -67,37 +75,51 @@ final class MyanimelistValidator extends BaseGeneratedValidator
             ]);
 
             if ($response->status() === 403) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Caught by WAF or IP Block (403)', mode: $this->mode(), key: $this->key());
+                return $finish('Error', 'Caught by WAF or IP Block (403)');
             }
             if ($response->status() === 429) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Rate limited wait for few minutes', mode: $this->mode(), key: $this->key());
+                return $finish('Error', 'Rate limited by MyAnimeList (429)');
             }
             if ($response->status() !== 200) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'HTTP Error: ' . $response->status(), mode: $this->mode(), key: $this->key());
+                return $finish('Error', 'HTTP Error: ' . $response->status());
             }
 
             $data = $response->json();
-            $errors = is_array($data['errors'] ?? null) ? $data['errors'] : [];
+            $errors = is_array($data) ? ($data['errors'] ?? []) : null;
+            if (!is_array($data) || !is_array($errors)) {
+                return $finish('Error', 'Unexpected MyAnimeList response structure');
+            }
             foreach ($errors as $error) {
-                $message = strtolower((string) ($error['message'] ?? ''));
+                $message = is_array($error) && is_string($error['message'] ?? null) ? strtolower($error['message']) : '';
                 if (str_contains($message, 'already have an account')) {
-                    return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key());
+                    return $finish('Registered');
                 }
             }
 
-            $respData = $data['data'] ?? null;
-            if (is_array($respData) && $respData === []) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
+            if ($errors !== []) {
+                return $finish('Error', 'MyAnimeList rejected validation without account evidence');
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected response body structure, report it via GitHub issues', mode: $this->mode(), key: $this->key());
+            // Preserve [] versus {}: assoc JSON decoding collapses both into
+            // an empty PHP array, but only an explicit empty list is the API's
+            // known negative contract.
+            $payload = json_decode($response->body());
+            $respData = is_object($payload) ? ($payload->data ?? null) : null;
+            if (is_array($respData) && $respData === []) {
+                return $finish('Not Registered');
+            }
+
+            return $finish('Error', 'Unexpected MyAnimeList response structure; account status unknown');
         } catch (\Throwable $e) {
+            $safeMessage = ScannerDiagnostics::exception($e, 'validator.request', [
+                'mode' => $this->mode(), 'module' => $this->key(), 'redact_values' => [$target],
+            ]);
             $message = strtolower($e->getMessage());
             $reason = str_contains($message, 'timed out')
                 ? (str_contains($message, 'read') ? 'Server took too long to respond (Read Timeout)' : 'Connection timed out! maybe region blocks')
-                : $e->getMessage();
+                : $safeMessage;
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $reason, mode: $this->mode(), key: $this->key());
+            return $finish('Error', $reason);
         }
     }
 

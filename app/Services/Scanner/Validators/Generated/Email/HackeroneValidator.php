@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Services\Scanner\Validators\Generated\Email;
 
 use App\DTO\ScanResult;
+use App\Services\Scanner\ScannerDiagnostics;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -40,6 +41,14 @@ final class HackeroneValidator extends BaseGeneratedValidator
     public function check(string $target, array $options = []): ScanResult
     {
         $cookieJar = new CookieJar();
+        $startedAt = microtime(true);
+        $response = null;
+        $requestStage = 'handshake';
+        $finish = function (string $status, string $reason = '') use ($target, $options, $startedAt, &$response, &$requestStage): ScanResult {
+            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(),
+                $status, ScannerDiagnostics::redact($reason, [$target]), mode: $this->mode(), key: $this->key(),
+                metadata: $this->mergeRequestDiagnostics(['request_stage' => $requestStage], $options, $response, $startedAt));
+        };
 
         try {
             $request = Http::timeout(15)
@@ -53,7 +62,7 @@ final class HackeroneValidator extends BaseGeneratedValidator
                 $request = $request->withOptions(['proxy' => $options['proxy']]);
             }
 
-            $page = $request->withHeaders([
+            $response = $request->withHeaders([
                 'User-Agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
                 'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
                 'Accept-Encoding' => 'identity',
@@ -76,13 +85,18 @@ final class HackeroneValidator extends BaseGeneratedValidator
                 'priority' => 'u=0, i',
             ])->get('https://hackerone.com/sign_up');
 
-            if ($page->status() === 403) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Caught by WAF (403) during Handshake', mode: $this->mode(), key: $this->key());
+            if ($response->status() === 403) {
+                return $finish('Error', 'Caught by WAF (403) during Handshake');
             }
-            if (!preg_match('/name="csrf-token" content="([^"]+)"/', $page->body(), $match)) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Failed to extract CSRF token', mode: $this->mode(), key: $this->key());
+            if ($response->status() !== 200) {
+                return $finish('Error', 'Unexpected HTTP '.$response->status().' during HackerOne Handshake');
+            }
+            if (!preg_match('/name="csrf-token" content="([^"]+)"/', $response->body(), $match)) {
+                return $finish('Error', 'Failed to extract CSRF token');
             }
 
+            $requestStage = 'validation';
+            $response = null;
             $response = $request->withHeaders([
                 'sec-ch-ua-full-version-list' => '"Not:A-Brand";v="99.0.0.0", "Google Chrome";v="145.0.7632.109", "Chromium";v="145.0.7632.109"',
                 'sec-ch-ua-platform' => '"Linux"',
@@ -115,23 +129,56 @@ final class HackeroneValidator extends BaseGeneratedValidator
             ]);
 
             if ($response->status() === 403) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Caught by WAF (403) during Validation', mode: $this->mode(), key: $this->key());
+                return $finish('Error', 'Caught by WAF (403) during Validation');
             }
             if ($response->status() === 429) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Rate limited by HackerOne', mode: $this->mode(), key: $this->key());
+                return $finish('Error', 'Rate limited by HackerOne (429)');
             }
 
-            $errors = $response->json('errors') ?? [];
-            if (str_contains((string) json_encode($errors), 'has already been taken')) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Registered', '', mode: $this->mode(), key: $this->key());
-            }
-            if (!array_key_exists('email', is_array($errors) ? $errors : [])) {
-                return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Not Registered', '', mode: $this->mode(), key: $this->key());
+            // A known-looking error string in a gateway/error response is not
+            // account evidence. Validate transport status before either verdict.
+            if ($response->status() !== 200) {
+                return $finish('Error', 'Unexpected response: ' . $response->status());
             }
 
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', 'Unexpected response: ' . $response->status(), mode: $this->mode(), key: $this->key());
+            // Verdict guards: only errors.email carries account evidence. A taken
+            // username, missing required fields we never submitted, or any
+            // non-200 payload is not email evidence and must stay an Error.
+            $errors = $response->json('errors');
+
+            $emailErrors = is_array($errors) ? ($errors['email'] ?? null) : null;
+            if ($emailErrors === ['has already been taken']) {
+                return $finish('Registered');
+            }
+
+            if (!is_array($errors)) {
+                return $finish('Error', 'Unexpected response: ' . $response->status());
+            }
+
+            if (array_key_exists('email', $errors)) {
+                return $finish('Error', 'HackerOne returned an unrecognized email validation error; account status unknown');
+            }
+
+            // A negative verdict is only safe when the validation contract ran to
+            // completion on inputs this probe controls: the deliberate password
+            // confirmation mismatch must be the only complaint. Any other error
+            // field (username, first_name, last_name, ...) means the request was
+            // rejected before email evidence could be established.
+            if (array_keys($errors) === ['password_confirmation']
+                && $errors['password_confirmation'] === ["doesn't match Password"]) {
+                return $finish('Not Registered');
+            }
+
+            $unexpectedFields = implode(', ', array_map('strval', array_keys($errors)));
+            $reason = $unexpectedFields === ''
+                ? 'HackerOne returned an empty validation payload; account status unknown'
+                : 'HackerOne validation contract changed (unexpected error fields: ' . $unexpectedFields . '); account status unknown';
+
+            return $finish('Error', $reason);
         } catch (\Throwable $e) {
-            return new ScanResult($target, $this->category(), $this->siteName(), $this->siteUrl(), 'Error', $e->getMessage(), mode: $this->mode(), key: $this->key());
+            return $finish('Error', ScannerDiagnostics::exception($e, 'validator.'.$requestStage, [
+                'mode' => $this->mode(), 'module' => $this->key(), 'redact_values' => [$target],
+            ]));
         }
     }
 

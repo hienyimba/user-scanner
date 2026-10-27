@@ -50,6 +50,10 @@ final class EtsyValidator extends BaseGeneratedValidator
     {
         return [
             'Referer' => 'https://www.etsy.com/join/email',
+            // Required by Etsy's public web client for these ajax endpoints
+            // (see the join/search client bundles); absent it the API answers
+            // HTTP 400 "Missing required header x-etsy-protection".
+            'x-etsy-protection' => '1',
         ];
     }
 
@@ -79,6 +83,21 @@ protected function parseConnectorResponse(Response $response, string $target): a
 {
     if ($response->status() === 403) {
         return ['Error', '403'];
+    }
+
+    // Never fabricate an account verdict from HTTP 400. Surface Etsy's
+    // explicit bootstrap/protection errors instead of hiding them.
+    if ($response->status() === 400) {
+        $error = $response->json('error');
+        if (is_string($error) && str_contains(strtolower($error), 'missing required header')) {
+            return ['Error', 'Etsy rejected the public client request: '.$error];
+        }
+
+        return ['Error', 'Etsy identity lookup rejected the request (HTTP 400)'.(is_string($error) && $error !== '' ? ': '.$error : '')];
+    }
+
+    if ($response->status() !== 200) {
+        return ['Error', 'Unexpected response status: '.$response->status()];
     }
     if (trim($response->body()) === 'null') {
         return ['Not Registered', ''];

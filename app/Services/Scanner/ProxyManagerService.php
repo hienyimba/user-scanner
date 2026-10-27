@@ -43,6 +43,7 @@ final class ProxyManagerService
             $this->candidates[$fingerprint] = [
                 'raw' => $raw, 'fingerprint' => $fingerprint,
                 'resolved' => $this->resolveProxyUrl($raw), 'tier' => $this->tierOf($raw),
+                'country' => $this->countryCodeOf($raw),
             ];
         }
     }
@@ -135,9 +136,40 @@ final class ProxyManagerService
     }
 
     /**
+     * Configured ISO country code for a pool member, when known.
+     */
+    public function countryCodeOf(string $rawProxy): ?string
+    {
+        $country = $this->configuredPoolEntry($rawProxy)['country_code'] ?? null;
+
+        return is_string($country) && $country !== '' ? strtoupper($country) : null;
+    }
+
+    /**
+     * Acquire a lease preferring a tier and, deliberately, an exit geography.
+     * Country preference outranks tier for retries against region-sensitive
+     * targets: a matching-country primary beats a non-matching fallback.
+     *
+     * @param  array<int, string>  $excludeRaw
+     * @return array{raw:string,proxy:string,token:string,expires:int}|null
+     */
+    public function acquireWithGeography(?string $preferredTier, ?string $preferredCountry, int $offset = 0, array $excludeRaw = []): ?array
+    {
+        return $this->acquireWithPreference($preferredTier, $preferredCountry, $offset, $excludeRaw);
+    }
+
+    /**
      * @param  array<int, string>  $excludeRaw
      */
     private function acquireWithTierPreference(?string $preferredTier, int $offset, array $excludeRaw): ?array
+    {
+        return $this->acquireWithPreference($preferredTier, null, $offset, $excludeRaw);
+    }
+
+    /**
+     * @param  array<int, string>  $excludeRaw
+     */
+    private function acquireWithPreference(?string $preferredTier, ?string $preferredCountry, int $offset, array $excludeRaw): ?array
     {
         if ($this->proxies === []) {
             return null;
@@ -148,7 +180,7 @@ final class ProxyManagerService
         $deadline = microtime(true) + $waitTimeoutSeconds;
 
         do {
-            $lease = $this->attemptAcquire($offset, $excludeRaw, $preferredTier);
+            $lease = $this->attemptAcquire($offset, $excludeRaw, $preferredTier, $preferredCountry);
             if ($lease !== null) {
                 return $lease;
             }
@@ -211,8 +243,9 @@ final class ProxyManagerService
      * @param  array<int, string>  $excludeRaw
      * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
-    private function attemptAcquire(int $offset, array $excludeRaw, ?string $preferredTier = null): ?array
+    private function attemptAcquire(int $offset, array $excludeRaw, ?string $preferredTier = null, ?string $preferredCountry = null): ?array
     {
+        $preferredCountry = $preferredCountry !== null ? strtoupper($preferredCountry) : null;
         $maxConcurrentPerProxy = max(1, (int) config('scanner.proxies.behavior.max_concurrent_per_proxy', 2));
         $excluded = array_fill_keys(array_map([$this, 'proxyFingerprint'], $excludeRaw), true);
         $grouped = [
@@ -225,6 +258,16 @@ final class ProxyManagerService
             'primary' => ['primary', 'fallback'],
             default => ['primary', 'fallback'],
         };
+
+        $ordered = [];
+        foreach ($tierOrder as $tier) {
+            $ordered = array_merge($ordered, $grouped[$tier]);
+        }
+        if ($preferredCountry !== null) {
+            // Deliberate geography: matching-country exits first, tier order
+            // preserved within each partition (usort is stable).
+            usort($ordered, static fn (array $a, array $b): int => (($b['country'] ?? null) === $preferredCountry ? 1 : 0) <=> (($a['country'] ?? null) === $preferredCountry ? 1 : 0));
+        }
 
         // Batch-read health without a pool-wide mutex. Each slot claim is an
         // independent atomic cache lock, even on the database cache driver.
@@ -244,25 +287,23 @@ final class ProxyManagerService
             }
         }
 
-        foreach ($tierOrder as $tier) {
-            foreach ($grouped[$tier] as $candidate) {
-                $fingerprint = $candidate['fingerprint'];
-                if ((int) ($cooldowns[$this->cooldownCacheKey($fingerprint)] ?? 0) > $now) {
+        foreach ($ordered as $candidate) {
+            $fingerprint = $candidate['fingerprint'];
+            if ((int) ($cooldowns[$this->cooldownCacheKey($fingerprint)] ?? 0) > $now) {
+                continue;
+            }
+
+            for ($slot = 0; $slot < $maxConcurrentPerProxy; $slot++) {
+                $lock = Cache::lock(self::LEASE_PREFIX.$fingerprint.':'.$slot, $ttl);
+                if (! $lock->get()) {
                     continue;
                 }
+                $token = $lock->owner();
+                $expires = now()->getTimestamp() + $ttl;
+                $this->ownedLeases[$fingerprint][$token] = ['lock' => $lock, 'expires' => $expires];
 
-                for ($slot = 0; $slot < $maxConcurrentPerProxy; $slot++) {
-                    $lock = Cache::lock(self::LEASE_PREFIX.$fingerprint.':'.$slot, $ttl);
-                    if (! $lock->get()) {
-                        continue;
-                    }
-                    $token = $lock->owner();
-                    $expires = now()->getTimestamp() + $ttl;
-                    $this->ownedLeases[$fingerprint][$token] = ['lock' => $lock, 'expires' => $expires];
-
-                    return ['raw' => $candidate['raw'], 'proxy' => $candidate['resolved'],
-                        'token' => $token, 'expires' => $expires];
-                }
+                return ['raw' => $candidate['raw'], 'proxy' => $candidate['resolved'],
+                    'token' => $token, 'expires' => $expires];
             }
         }
 

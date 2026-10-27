@@ -367,7 +367,7 @@ return [
                 ['when' => ['all' => [
                     ['field' => 'status', 'operator' => 'in', 'value' => [400, 401]],
                     ['field' => 'json', 'path' => 'message', 'operator' => 'contains_ci', 'value' => 'incorrect username or password'],
-                ]], 'status' => 'Registered'],
+                ]], 'status' => 'Error', 'reason' => 'EvolveYou returned a unified credential rejection; account existence cannot be determined'],
                 ['when' => ['all' => [
                     ['field' => 'status', 'operator' => 'in', 'value' => [400, 401]],
                     ['field' => 'json', 'path' => 'message', 'operator' => 'contains_ci', 'value' => 'user not found'],
@@ -843,6 +843,25 @@ return [
             'rules' => [
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'errCode', 'value' => 80820053]]], 'status' => 'Registered'],
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'errCode', 'value' => 80820021]]], 'status' => 'Not Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'errCode', 'value' => 80820058]]], 'status' => 'Error',
+                    'reason' => 'Talkme explicit application throttle (errCode 80820058): Please wait a moment before trying again',
+                    'metadata_from_json' => ['upstream_error_code' => 'errCode'],
+                ],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'errCode', 'value' => 80820122]]], 'status' => 'Error',
+                    'reason' => 'Talkme email delivery unavailable or service quota reached (errCode 80820122); account status unknown',
+                    'metadata_from_json' => ['upstream_error_code' => 'errCode'],
+                ],
+            ],
+            // Explicit repeated-target/service throttle or email-quota error,
+            // not an IP/account verdict. Back off briefly per module and per
+            // target; both windows are bounded and never retried blindly.
+            'backoff' => [
+                'match' => ['all' => [['field' => 'status', 'value' => 200], ['any' => [
+                    ['field' => 'json', 'path' => 'errCode', 'value' => 80820058],
+                    ['field' => 'json', 'path' => 'errCode', 'value' => 80820122],
+                ]]]],
+                'service_cooldown_seconds' => 60,
+                'target_cooldown_seconds' => 300,
             ],
         ],
         [
@@ -940,8 +959,10 @@ return [
                 'body' => ['action' => 'register_attempt', 'email' => '{target}', 'is_dol' => 'true'],
             ],
             'rules' => [
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'success', 'operator' => 'truthy'], ['field' => 'json', 'path' => 'email_exists', 'operator' => 'truthy']]], 'status' => 'Error', 'reason' => 'Locanto returned contradictory account flags; account status unknown'],
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'success', 'operator' => 'truthy']]], 'status' => 'Not Registered'],
-                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['any' => [['field' => 'json', 'path' => 'email_exists', 'operator' => 'truthy'], ['field' => 'json', 'path' => 'text', 'operator' => 'contains_ci', 'value' => 'already exists'], ['field' => 'json', 'path' => 'text', 'operator' => 'contains_ci', 'value' => 'something went wrong']]]]], 'status' => 'Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['any' => [['field' => 'json', 'path' => 'email_exists', 'operator' => 'truthy'], ['field' => 'json', 'path' => 'text', 'operator' => 'contains_ci', 'value' => 'already exists']]]]], 'status' => 'Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'text', 'operator' => 'contains_ci', 'value' => 'something went wrong']]], 'status' => 'Error', 'reason' => 'Locanto returned a generic registration error; account status unknown'],
             ],
         ],
         [
@@ -1413,8 +1434,8 @@ return [
             ]],
             'request' => ['method' => 'POST', 'url' => 'https://vimeo.com/join', 'body_mode' => 'form', 'headers' => ['Accept' => 'application/json', 'X-Requested-With' => 'XMLHttpRequest', 'Content-Type' => 'application/x-www-form-urlencoded', 'Origin' => 'https://vimeo.com', 'Referer' => 'https://vimeo.com/join'], 'body' => ['email' => '{target}', 'token' => '{xsrft}', 'action' => 'join', 'service' => 'vimeo', 'email_validation' => 'true']],
             'rules' => [
-                ['when' => ['field' => 'json', 'path' => 'has_error_user_exists', 'operator' => 'truthy'], 'status' => 'Registered'],
-                ['when' => ['field' => 'json_root', 'operator' => 'is_list'], 'status' => 'Not Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'has_error_user_exists', 'operator' => 'truthy']]], 'status' => 'Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json_root', 'operator' => 'is_empty_list']]], 'status' => 'Not Registered'],
             ],
         ],
         [
@@ -1524,8 +1545,8 @@ return [
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.alza.at', 'headers' => ['Referer' => 'https://www.alza.at', 'Origin' => 'https://www.alza.at', 'Accept' => 'application/json']]],
             'request' => ['method' => 'POST', 'url' => 'https://www.alza.at/Services/EShopService.svc/CheckLoginAvailability', 'headers' => ['Referer' => 'https://www.alza.at', 'Origin' => 'https://www.alza.at', 'Accept' => 'application/json'], 'body' => ['login' => '{target}']],
             'rules' => [
-                ['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0], 'status' => 'Not Registered'],
-                ['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]], 'status' => 'Registered', 'metadata_from_json' => ['login_availability_type' => 'LoginAvailabilityType']],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0]]], 'status' => 'Not Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]]]], 'status' => 'Registered', 'metadata_from_json' => ['login_availability_type' => 'LoginAvailabilityType']],
             ],
         ],
         [
@@ -1533,28 +1554,28 @@ return [
             'site_url' => 'https://www.alza.cz', 'source' => 'email_scan/shopping/alza_cz.py',
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.alza.cz', 'headers' => ['Referer' => 'https://www.alza.cz', 'Origin' => 'https://www.alza.cz', 'Accept' => 'application/json']]],
             'request' => ['method' => 'POST', 'url' => 'https://www.alza.cz/Services/EShopService.svc/CheckLoginAvailability', 'headers' => ['Referer' => 'https://www.alza.cz', 'Origin' => 'https://www.alza.cz', 'Accept' => 'application/json'], 'body' => ['login' => '{target}']],
-            'rules' => [['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0], 'status' => 'Not Registered'], ['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]], 'status' => 'Registered']],
+            'rules' => [['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0]]], 'status' => 'Not Registered'], ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]]]], 'status' => 'Registered']],
         ],
         [
             'key' => 'alza_de', 'category' => 'shopping', 'site_name' => 'AlzaDe',
             'site_url' => 'https://www.alza.de', 'source' => 'email_scan/shopping/alza_de.py',
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.alza.de', 'headers' => ['Referer' => 'https://www.alza.de', 'Origin' => 'https://www.alza.de', 'Accept' => 'application/json']]],
             'request' => ['method' => 'POST', 'url' => 'https://www.alza.de/Services/EShopService.svc/CheckLoginAvailability', 'headers' => ['Referer' => 'https://www.alza.de', 'Origin' => 'https://www.alza.de', 'Accept' => 'application/json'], 'body' => ['login' => '{target}']],
-            'rules' => [['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0], 'status' => 'Not Registered'], ['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]], 'status' => 'Registered']],
+            'rules' => [['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0]]], 'status' => 'Not Registered'], ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]]]], 'status' => 'Registered']],
         ],
         [
             'key' => 'alza_hu', 'category' => 'shopping', 'site_name' => 'AlzaHu',
             'site_url' => 'https://www.alza.hu', 'source' => 'email_scan/shopping/alza_hu.py',
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.alza.hu', 'headers' => ['Referer' => 'https://www.alza.hu', 'Origin' => 'https://www.alza.hu', 'Accept' => 'application/json']]],
             'request' => ['method' => 'POST', 'url' => 'https://www.alza.hu/Services/EShopService.svc/CheckLoginAvailability', 'headers' => ['Referer' => 'https://www.alza.hu', 'Origin' => 'https://www.alza.hu', 'Accept' => 'application/json'], 'body' => ['login' => '{target}']],
-            'rules' => [['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0], 'status' => 'Not Registered'], ['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]], 'status' => 'Registered']],
+            'rules' => [['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0]]], 'status' => 'Not Registered'], ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]]]], 'status' => 'Registered']],
         ],
         [
             'key' => 'alza_sk', 'category' => 'shopping', 'site_name' => 'AlzaSk',
             'site_url' => 'https://www.alza.sk', 'source' => 'email_scan/shopping/alza_sk.py',
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.alza.sk', 'headers' => ['Referer' => 'https://www.alza.sk', 'Origin' => 'https://www.alza.sk', 'Accept' => 'application/json']]],
             'request' => ['method' => 'POST', 'url' => 'https://www.alza.sk/Services/EShopService.svc/CheckLoginAvailability', 'headers' => ['Referer' => 'https://www.alza.sk', 'Origin' => 'https://www.alza.sk', 'Accept' => 'application/json'], 'body' => ['login' => '{target}']],
-            'rules' => [['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0], 'status' => 'Not Registered'], ['when' => ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]], 'status' => 'Registered']],
+            'rules' => [['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'value' => 0]]], 'status' => 'Not Registered'], ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'LoginAvailabilityType', 'operator' => 'in', 'value' => [1, 2]]]], 'status' => 'Registered']],
         ],
         [
             'key' => 'rappi', 'category' => 'shopping', 'site_name' => 'Rappi',
@@ -1613,16 +1634,10 @@ return [
             'site_url' => 'https://redtube.com', 'source' => 'email_scan/adult/redtube.py',
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.redtube.com/register', 'headers' => ['User-Agent' => 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36', 'Referer' => 'https://www.redtube.com/register'], 'capture' => ['token' => ['from' => 'body_regex', 'pattern' => '~page_params\\.token\\s*=\\s*"([^"]+)"~', 'error_reason' => 'RedTube dynamic token extraction failed']]]],
             'request' => ['method' => 'POST', 'url' => 'https://www.redtube.com/user/create_account_check', 'body_mode' => 'form', 'query' => ['token' => '{token}'], 'headers' => ['X-Requested-With' => 'XMLHttpRequest', 'Origin' => 'https://www.redtube.com', 'Referer' => 'https://www.redtube.com/register', 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8'], 'body' => ['token' => '{token}', 'check_what' => 'email', 'email' => '{target}']],
-            'probe_request' => ['method' => 'POST', 'url' => 'https://www.redtube.com/user/create_account_check', 'body_mode' => 'form', 'query' => ['token' => '{token}'], 'headers' => ['X-Requested-With' => 'XMLHttpRequest', 'Origin' => 'https://www.redtube.com', 'Referer' => 'https://www.redtube.com/register', 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8'], 'body' => ['token' => '{token}', 'check_what' => 'email', 'email' => '{probe_target}']],
             'rules' => [
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'email', 'value' => 'create_account_passed'], ['field' => 'json', 'path' => 'error_message', 'operator' => 'empty']]], 'status' => 'Not Registered'],
-                ['when' => ['all' => [['field' => 'json', 'path' => 'email', 'value' => 'create_account_failed'], ['field' => 'json', 'path' => 'error_message', 'operator' => 'contains_ci', 'value' => 'already registered']]], 'status' => 'Registered'],
-                ['when' => ['all' => [['field' => 'json', 'path' => 'email', 'value' => 'create_account_failed'], ['field' => 'json', 'path' => 'error_message', 'operator' => 'contains_ci', 'value' => 'does not meet our registration requirements']]], 'status' => 'Probe'],
-                ['when' => ['field' => 'json', 'path' => 'email', 'value' => 'create_account_failed'], 'status' => 'Not Registered', 'reason' => 'Registration validation rejected this address'],
-            ],
-            'probe_rules' => [
-                ['when' => ['field' => 'json', 'path' => 'error_message', 'operator' => 'contains_ci', 'value' => 'does not meet our registration requirements'], 'status' => 'Not Registered', 'reason' => 'Domain is rejected by RedTube registration'],
-                ['when' => ['field' => 'status', 'value' => 200], 'status' => 'Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'email', 'value' => 'create_account_failed'], ['field' => 'json', 'path' => 'error_message', 'operator' => 'contains_ci', 'value' => 'already registered']]], 'status' => 'Registered'],
+                ['when' => ['field' => 'json', 'path' => 'email', 'value' => 'create_account_failed'], 'status' => 'Error', 'reason' => 'RedTube registration policy rejected the address; account status unknown'],
             ],
         ],
         [
@@ -1630,15 +1645,11 @@ return [
             'site_url' => 'https://tube8.com', 'source' => 'email_scan/adult/tube8.py',
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.tube8.com/register', 'capture' => ['token' => ['from' => 'body_regex', 'pattern' => '~page_params\\.token\\s*=\\s*"([^"]+)"~', 'error_reason' => 'Tube8 dynamic token extraction failed']]]],
             'request' => ['method' => 'POST', 'url' => 'https://www.tube8.com/register/verify_email', 'body_mode' => 'form', 'query' => ['token' => '{token}'], 'headers' => ['X-Requested-With' => 'XMLHttpRequest', 'Origin' => 'https://www.tube8.com', 'Referer' => 'https://www.tube8.com/register', 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8'], 'body' => ['token' => '{token}', 'email' => '{target}']],
-            'probe_request' => ['method' => 'POST', 'url' => 'https://www.tube8.com/register/verify_email', 'body_mode' => 'form', 'query' => ['token' => '{token}'], 'headers' => ['X-Requested-With' => 'XMLHttpRequest', 'Origin' => 'https://www.tube8.com', 'Referer' => 'https://www.tube8.com/register', 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8'], 'body' => ['token' => '{token}', 'email' => '{probe_target}']],
             'rules' => [
-                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'success', 'operator' => 'truthy']]], 'status' => 'Not Registered'],
-                ['when' => ['field' => 'json', 'path' => 'messages', 'operator' => 'array_contains_ci', 'value' => 'does not meet our registration requirements'], 'status' => 'Probe'],
-            ],
-            'probe_rules' => [
-                ['when' => ['field' => 'json', 'path' => 'messages', 'operator' => 'array_contains_ci', 'value' => 'does not meet our registration requirements'], 'status' => 'Not Registered', 'reason' => 'Domain is rejected by Tube8 registration'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'success', 'operator' => 'truthy'], ['field' => 'json', 'path' => 'messages', 'operator' => 'empty']]], 'status' => 'Not Registered'],
+                ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'success', 'operator' => 'falsy'], ['field' => 'json', 'path' => 'messages', 'operator' => 'array_contains_ci', 'value' => 'already registered']]], 'status' => 'Registered'],
+                ['when' => ['field' => 'json', 'path' => 'messages', 'operator' => 'array_contains_ci', 'value' => 'does not meet our registration requirements'], 'status' => 'Error', 'reason' => 'Tube8 registration policy rejected the address; account status unknown'],
                 ['when' => ['field' => 'json', 'path' => 'messages', 'operator' => 'array_contains_ci', 'value' => 'not available'], 'status' => 'Error', 'reason' => 'Rate limited, wait for a few minutes'],
-                ['when' => ['field' => 'status', 'value' => 200], 'status' => 'Registered'],
             ],
         ],
         [

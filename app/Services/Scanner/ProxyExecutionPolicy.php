@@ -47,23 +47,93 @@ final class ProxyExecutionPolicy
 
         $firstResult = self::executeLease($proxyManager, $lease, $attempt, $errorResult, $context);
         if (! self::isRetryableProxyFailure($firstResult) || self::maxProxyRetries() < 1) {
-            return $firstResult;
+            return self::withAttemptDiagnostics($firstResult, [self::attemptDiagnostics($proxyManager, $lease, $firstResult, 1)]);
         }
 
+        // Resolve the default here, not only in the synchronous engine: queued
+        // jobs call this policy directly. This remains a country preference,
+        // not a hard country filter; username tier selection is unchanged.
+        $mode = $context['mode'] ?? $firstResult->mode;
+        $retryCountry = array_key_exists('retry_country', $options)
+            ? $options['retry_country']
+            : ($mode === 'email' ? config('scanner.proxies.behavior.email_retry_country', 'US') : null);
+        $retryCountry = is_string($retryCountry) && trim($retryCountry) !== '' ? strtoupper(trim($retryCountry)) : null;
         try {
             $retryLease = $proxyManager->tierOf($lease['raw']) === 'primary'
-                ? $proxyManager->acquirePreferred('fallback', $offset + 1, [$lease['raw']])
-                : $proxyManager->acquire($offset + 1, [$lease['raw']]);
+                ? $proxyManager->acquireWithGeography('fallback', $retryCountry, $offset + 1, [$lease['raw']])
+                : $proxyManager->acquireWithGeography(null, $retryCountry, $offset + 1, [$lease['raw']]);
         } catch (Throwable $exception) {
             ScannerDiagnostics::exception($exception, 'proxy.retry_acquire', $context);
 
-            return $firstResult;
+            return self::withAttemptDiagnostics($firstResult, [self::attemptDiagnostics($proxyManager, $lease, $firstResult, 1)]);
         }
         if ($retryLease === null) {
-            return $firstResult;
+            return self::withAttemptDiagnostics($firstResult, [self::attemptDiagnostics($proxyManager, $lease, $firstResult, 1)]);
         }
 
-        return self::executeLease($proxyManager, $retryLease, $attempt, $errorResult, $context);
+        $finalResult = self::executeLease($proxyManager, $retryLease, $attempt, $errorResult, $context);
+
+        return self::withAttemptDiagnostics($finalResult, [
+            self::attemptDiagnostics($proxyManager, $lease, $firstResult, 1),
+            self::attemptDiagnostics($proxyManager, $retryLease, $finalResult, 2),
+        ]);
+    }
+
+    /**
+     * Redacted per-attempt evidence for intermittent production-only failures:
+     * HTTP status, Retry-After and safe upstream codes only; never the target,
+     * credentials or response bodies.
+     *
+     * @param  array{raw:string,proxy:string,token:string,expires:int}  $lease
+     * @return array<string, mixed>
+     */
+    private static function attemptDiagnostics(ProxyManagerService $proxyManager, array $lease, ScanResult $result, int $attemptNumber): array
+    {
+        $diagnostics = [
+            'attempt' => $attemptNumber,
+            'proxy_id' => sha1(preg_replace('~^https?://~', '', preg_replace('~//[^/@]+@~', '//', $lease['raw']))),
+            'route_tier' => $proxyManager->tierOf($lease['raw']),
+            'route_country' => $proxyManager->countryCodeOf($lease['raw']),
+            'status' => $result->status,
+        ];
+        foreach (['http_status', 'retry_after_seconds', 'upstream_error_code'] as $key) {
+            if (isset($result->metadata[$key]) && (is_int($result->metadata[$key]) || is_string($result->metadata[$key]))) {
+                $diagnostics[$key] = $result->metadata[$key];
+            }
+        }
+
+        return $diagnostics;
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $attempts
+     */
+    private static function withAttemptDiagnostics(ScanResult $result, array $attempts): ScanResult
+    {
+        // Retain recovered failures too. Avoid the extra payload for a normal
+        // single-attempt success, whose request metadata is already present.
+        if ($attempts === [] || ($result->status !== 'Error' && count($attempts) === 1)) {
+            return $result;
+        }
+
+        return new ScanResult(
+            target: $result->target,
+            category: $result->category,
+            siteName: $result->siteName,
+            url: $result->url,
+            status: $result->status,
+            reason: $result->reason,
+            extra: $result->extra,
+            mode: $result->mode,
+            key: $result->key,
+            platform: $result->platform,
+            normalizedStatus: $result->normalizedStatus,
+            profileUrl: $result->profileUrl,
+            confidence: $result->confidence,
+            metadata: array_merge($result->metadata, ['attempts' => $attempts]),
+            externalLinks: $result->externalLinks,
+            error: $result->error,
+        );
     }
 
     private static function executeLease(ProxyManagerService $manager, array $lease, callable $attempt, callable $errorResult, array $context): ScanResult
@@ -132,6 +202,14 @@ final class ProxyExecutionPolicy
     private static function isRetryableProxyFailure(ScanResult $result): bool
     {
         if ($result->status !== 'Error') {
+            return false;
+        }
+
+        // Do not rotate immediately against an explicit upstream cooldown.
+        // Return its error/diagnostics without tying up a worker in a sleep;
+        // this policy does not reschedule jobs or promise a later retry.
+        if (is_numeric($result->metadata['retry_after_seconds'] ?? null)
+            && (float) $result->metadata['retry_after_seconds'] > 0) {
             return false;
         }
 

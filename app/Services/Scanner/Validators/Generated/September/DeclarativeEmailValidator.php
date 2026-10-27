@@ -9,6 +9,7 @@ use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use GuzzleHttp\Cookie\CookieJar;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -83,6 +84,19 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
             $request = (array) ($this->definition['request'] ?? []);
             $cookieJar = new CookieJar;
 
+            $backoff = (array) ($this->definition['backoff'] ?? []);
+            $gate = $this->throttleBackoffGate($target, $backoff);
+            if ($gate !== null) {
+                return $this->result(
+                    target: $target,
+                    status: 'Error',
+                    reason: $gate['reason'],
+                    metadata: $gate['metadata'],
+                    options: $options,
+                    startedAt: $startedAt,
+                );
+            }
+
             foreach ((array) ($this->definition['bootstrap'] ?? []) as $bootstrap) {
                 if (! is_array($bootstrap)) {
                     continue;
@@ -149,6 +163,7 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
             }
 
             $json = $this->decodeResponseJson($response, (bool) ($this->definition['json_from_braces'] ?? false));
+            $this->recordThrottleBackoff($target, $backoff, $response, $json);
             foreach ((array) ($this->definition['rules'] ?? []) as $rule) {
                 $condition = $this->interpolateValue((array) ($rule['when'] ?? []), $context);
                 if (! is_array($rule) || ! $this->matches($condition, $response, $json)) {
@@ -342,6 +357,10 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
             'empty' => $actual === null || $actual === '' || $actual === [],
             'count_gt' => is_countable($actual) && count($actual) > (int) $expected,
             'is_list' => is_array($actual) && array_is_list($actual),
+            // Associative decoding otherwise collapses JSON {} and [] into
+            // the same PHP value. Use only for an explicit root-list contract.
+            'is_empty_list' => $field === 'json_root' && $actual === []
+                && is_array(json_decode($response->body())),
             'array_any' => is_array($actual) && $this->arrayAny($actual, (array) ($condition['where'] ?? []), $response, $json),
             'array_contains_ci' => is_array($actual) && $this->arrayContains($actual, $expected, true),
             default => false,
@@ -567,6 +586,85 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
         }
 
         return $this->result($target, 'Error', 'Domain-control probe returned an unexpected response', options: $options, response: $response, startedAt: $startedAt);
+    }
+
+    /**
+     * Bounded service/repeated-target backoff for modules whose API returns an
+     * explicit throttle signal (e.g. Talkme errCode 80820058). While a cooldown
+     * is active the module returns an Error without any network request; both
+     * windows expire automatically, so this is never a permanent skip.
+     *
+     * @param  array<string, mixed>  $backoff
+     * @return array{reason:string,metadata:array<string, mixed>}|null
+     */
+    private function throttleBackoffGate(string $target, array $backoff): ?array
+    {
+        if ($backoff === []) {
+            return null;
+        }
+
+        $now = time();
+        foreach (['target' => $this->backoffTargetCacheKey($target), 'service' => $this->backoffServiceCacheKey()] as $scope => $cacheKey) {
+            $until = (int) Cache::get($cacheKey, 0);
+            if ($until <= $now) {
+                continue;
+            }
+
+            $remaining = $until - $now;
+
+            return [
+                'reason' => $this->key().' explicit throttle backoff active ('.$scope.' scope); retry after '.$remaining.'s',
+                'metadata' => [
+                    'throttle_backoff' => $scope,
+                    'retry_after_seconds' => $remaining,
+                ],
+            ];
+        }
+
+        return null;
+    }
+
+    /** @param array<string, mixed> $backoff @param array<string, mixed>|array<int, mixed>|null $json */
+    private function recordThrottleBackoff(string $target, array $backoff, Response $response, ?array $json): void
+    {
+        $match = $backoff['match'] ?? null;
+        if (! is_array($match) || $match === []) {
+            return;
+        }
+
+        try {
+            $matched = $this->matches($this->interpolateValue($match, ['target' => $target]), $response, $json);
+        } catch (Throwable) {
+            return;
+        }
+        if (! $matched) {
+            return;
+        }
+
+        $now = time();
+        $targetCooldown = $this->boundedCooldown($backoff['target_cooldown_seconds'] ?? 300);
+        $serviceCooldown = $this->boundedCooldown($backoff['service_cooldown_seconds'] ?? 60);
+        if ($targetCooldown > 0) {
+            Cache::put($this->backoffTargetCacheKey($target), $now + $targetCooldown, $targetCooldown + 60);
+        }
+        if ($serviceCooldown > 0) {
+            Cache::put($this->backoffServiceCacheKey(), $now + $serviceCooldown, $serviceCooldown + 60);
+        }
+    }
+
+    private function boundedCooldown(mixed $seconds): int
+    {
+        return max(0, min(3600, (int) $seconds));
+    }
+
+    private function backoffTargetCacheKey(string $target): string
+    {
+        return 'scanner:email-backoff:'.$this->key().':target:'.hash('sha256', strtolower($target));
+    }
+
+    private function backoffServiceCacheKey(): string
+    {
+        return 'scanner:email-backoff:'.$this->key().':service';
     }
 
     /** @param array<string, scalar> $context */

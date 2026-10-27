@@ -95,7 +95,7 @@ final class NykaamanValidator extends BaseGeneratedValidator
     protected function detectBlockedOrChallenged(Response $response): ?array
     {
         if ($response->status() === 403) {
-            return ['Error', 'Nykaaman is blocked by the regional Akamai edge; retry through a US proxy exit'];
+            return ['Error', 'Nykaaman is blocked by the regional Akamai edge (HTTP 403); account status unknown'];
         }
 
         return parent::detectBlockedOrChallenged($response);
@@ -117,10 +117,14 @@ final class NykaamanValidator extends BaseGeneratedValidator
         $exists = $inner['is_exists'] ?? null;
         $message = strtolower((string) ($inner['message'] ?? ''));
 
-        if ($exists === true || str_contains($message, 'already registered')) {
+        if (($exists === false && str_contains($message, 'already registered'))
+            || ($exists === true && str_contains($message, 'welcome to nykaa'))) {
+            return ['Error', 'Nykaaman returned contradictory account evidence'];
+        }
+        if ($exists === true) {
             return ['Registered', ''];
         }
-        if ($exists === false || str_contains($message, 'welcome to nykaa')) {
+        if ($exists === false) {
             return ['Not Registered', ''];
         }
 

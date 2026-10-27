@@ -278,6 +278,7 @@ abstract class BaseGeneratedValidator implements ValidatorContract
                 $options['proxy'] ?? null,
                 $response->status(),
                 microtime(true) - ($startedAt ?? microtime(true)),
+                $response,
             );
         }
 
@@ -1348,13 +1349,14 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             $proxy,
             $response->status(),
             microtime(true) - $startedAt,
+            $response,
         );
     }
 
     /**
      * @return array<string, mixed>
      */
-    private function buildRequestDiagnosticsPayload(mixed $proxy, ?int $httpStatus, float $durationSeconds): array
+    private function buildRequestDiagnosticsPayload(mixed $proxy, ?int $httpStatus, float $durationSeconds, ?Response $response = null): array
     {
         $metadata = [
             'latency_ms' => max(0, (int) round($durationSeconds * 1000)),
@@ -1364,12 +1366,39 @@ abstract class BaseGeneratedValidator implements ValidatorContract
             $metadata['http_status'] = $httpStatus;
         }
 
+        if ($response !== null) {
+            $retryAfterSeconds = $this->parseRetryAfterSeconds($response);
+            if ($retryAfterSeconds !== null) {
+                $metadata['retry_after_seconds'] = $retryAfterSeconds;
+            }
+        }
+
         $proxyUsed = $this->sanitizeProxyLabel($proxy);
         if ($proxyUsed !== null) {
             $metadata['proxy_used'] = $proxyUsed;
         }
 
         return $metadata;
+    }
+
+    /**
+     * Redacted Retry-After value (delta seconds only) so intermittent
+     * production throttles can be diagnosed without storing response bodies.
+     */
+    private function parseRetryAfterSeconds(Response $response): ?int
+    {
+        $header = trim((string) $response->header('Retry-After'));
+        if ($header === '') {
+            return null;
+        }
+        if (ctype_digit($header)) {
+            return (int) $header;
+        }
+        try {
+            return max(0, (new \DateTimeImmutable($header))->getTimestamp() - time());
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     private function sanitizeProxyLabel(mixed $proxy): ?string

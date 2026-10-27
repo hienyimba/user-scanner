@@ -23,6 +23,8 @@ use App\Services\Scanner\Validators\Generated\Manual\User\VenmoValidator;
 use App\Services\Scanner\Validators\Generated\Manual\User\XValidator;
 
 $structuredProxyPool = [
+    // Frontier exits paused on 2026-10-27 after all ten failed live HTTPS checks.
+    /*
     [
         'label' => 'us-8030',
         'entry_point' => 'disp.oxylabs.io',
@@ -45,6 +47,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
     [
         'label' => 'us-8028',
         'entry_point' => 'disp.oxylabs.io',
@@ -460,6 +463,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    /*
     [
         'label' => 'us-8051',
         'entry_point' => 'disp.oxylabs.io',
@@ -482,6 +486,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
     [
         'label' => 'us-8049',
         'entry_point' => 'disp.oxylabs.io',
@@ -581,6 +586,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    /*
     [
         'label' => 'us-8040',
         'entry_point' => 'disp.oxylabs.io',
@@ -603,6 +609,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
     [
         'label' => 'us-8038',
         'entry_point' => 'disp.oxylabs.io',
@@ -625,6 +632,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    /*
     [
         'label' => 'us-8036',
         'entry_point' => 'disp.oxylabs.io',
@@ -636,6 +644,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
     [
         'label' => 'us-8035',
         'entry_point' => 'disp.oxylabs.io',
@@ -647,6 +656,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    /*
     [
         'label' => 'us-8034',
         'entry_point' => 'disp.oxylabs.io',
@@ -669,6 +679,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
     [
         'label' => 'us-8032',
         'entry_point' => 'disp.oxylabs.io',
@@ -680,6 +691,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    /*
     [
         'label' => 'us-8031',
         'entry_point' => 'disp.oxylabs.io',
@@ -691,6 +703,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
 ];
 
 $explicitProxyList = array_values(array_filter(array_map(
@@ -731,6 +744,11 @@ return [
             'cooldown_max_seconds' => (int) env('SCANNER_PROXY_COOLDOWN_MAX_SECONDS', 180),
             'wait_timeout_seconds' => (int) env('SCANNER_PROXY_WAIT_TIMEOUT_SECONDS', 20),
             'wait_retry_seconds' => (int) env('SCANNER_PROXY_WAIT_RETRY_SECONDS', 2),
+            // Deliberate email retry geography. The pool is 46 U.S. and 4 UK
+            // endpoints (2 UK primaries and both fallbacks UK); retries for
+            // email modules prefer this country over the tier-only fallback.
+            // Set to an empty value to disable the preference.
+            'email_retry_country' => env('SCANNER_EMAIL_RETRY_COUNTRY', 'US'),
         ],
     ],
 
@@ -768,8 +786,8 @@ return [
     'loud_modules' => [
         'username' => [],
         'email' => [
-            'leetcode',
-            'netflix',
+            //'leetcode',
+            //'netflix',
             'sexvid',
             'made.porn',
             'flirtbate',
@@ -788,6 +806,8 @@ return [
             'hanzii',
             'programminghub',
             'talkpal',
+            // Login may send a registration verification email (80820021).
+            'talkme',
             'memrise',
             'duocards',
             'speakly',
@@ -800,7 +820,7 @@ return [
             'weverse',
             'cambly',
             'superlive',
-            'medium',
+            //'medium',
             'cv_ee',
             'cv_lv',
             'cvkeskus',
