@@ -121,7 +121,8 @@ final class HackeroneValidator extends BaseGeneratedValidator
                 'accept-language' => 'en-US,en;q=0.9',
                 'priority' => 'u=1, i',
             ])->asForm()->post('https://hackerone.com/users', [
-                'user[name]' => 'St33l_h3art_g3t_n0_l0v3',
+                'user[first_name]' => 'Scanner',
+                'user[last_name]' => 'Probe',
                 'user[username]' => 'kn0wl3dg3_is_curs3',
                 'user[email]' => $target,
                 'user[password]' => 'thisw0rldwasn3v3rg00d',
