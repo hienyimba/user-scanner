@@ -7,6 +7,7 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
+        "hamaadraza/php-impersonate": "2.0.0",
         "laravel/framework": "^12.0",
         "laravel/tinker": "^2.10.1",
         "opcodesio/log-viewer": "^3.24"
@@ -50,6 +51,7 @@
             "@php artisan test"
         ],
         "post-autoload-dump": [
+            "@php tools/php-ffi/install-timeout-option.php",
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"
         ],

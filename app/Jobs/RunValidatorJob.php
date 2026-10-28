@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\DTO\ScanResult;
+use App\Services\Scanner\PhpFfiTransport;
 use App\Services\Scanner\ProxyExecutionPolicy;
 use App\Services\Scanner\ProxyManagerService;
 use App\Services\Scanner\ScanJobScheduler;
@@ -32,6 +33,8 @@ final class RunValidatorJob implements ShouldQueue
     // A default preserves compatibility with jobs serialized before scheduling.
     public ?int $scheduledTaskId = null;
 
+    private ?int $executionDeadlineNs = null;
+
     /**
      * @param  array<string, mixed>  $validatorMeta
      * @param  array<string, mixed>  $options
@@ -53,6 +56,9 @@ final class RunValidatorJob implements ShouldQueue
 
     public function handle(ScannerEngineService $engine, ProxyManagerService $proxyManager, ScanRunStore $store): void
     {
+        if (PhpFfiTransport::selected($this->mode, $this->validatorKey)) {
+            $this->executionDeadlineNs = hrtime(true) + max(1, $this->timeout - 5) * 1_000_000_000;
+        }
         $scheduler = app(ScanJobScheduler::class);
         if ($this->scheduledTaskId !== null) {
             if (! $scheduler->start($this, $store)) {
@@ -112,7 +118,7 @@ final class RunValidatorJob implements ShouldQueue
 
         return ProxyExecutionPolicy::run(
             proxyManager: $proxyManager,
-            options: $this->options,
+            options: [...$this->options, '_scanner_deadline_ns' => $this->executionDeadlineNs],
             offset: $this->proxyOffset,
             attempt: fn (?string $proxy): ScanResult => $this->attemptValidator($engine, $proxy),
             errorResult: fn (string $reason): ScanResult => $this->errorResult($reason),
@@ -130,7 +136,9 @@ final class RunValidatorJob implements ShouldQueue
                 options: [
                     ...$this->options,
                     'proxy' => $proxy,
+                    '_scanner_deadline_ns' => $this->executionDeadlineNs,
                 ],
+                proxyLeaseManaged: $proxy !== null,
             );
         } catch (Throwable $e) {
             return $this->errorResult(ScannerDiagnostics::exception($e, 'validator.request', $this->diagnosticContext()));

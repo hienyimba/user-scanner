@@ -44,7 +44,10 @@ final class ScannerDiagnostics
     {
         foreach ($sensitive as $secret) {
             if (is_string($secret) && $secret !== '') {
-                $message = str_replace(array_unique([$secret, rawurlencode($secret), urlencode($secret)]), '[TARGET]', $message);
+                $encoded = [rawurlencode($secret), urlencode($secret)];
+                $lowerEscapes = array_map(static fn ($value) => preg_replace_callback('/%[0-9A-F]{2}/', static fn ($m) => strtolower($m[0]), $value), $encoded);
+                $doubleEncoded = array_map('rawurlencode', $encoded);
+                $message = str_replace(array_unique([$secret, ...$encoded, ...$lowerEscapes, ...$doubleEncoded]), '[TARGET]', $message);
             }
         }
         foreach (['username', 'password'] as $key) {

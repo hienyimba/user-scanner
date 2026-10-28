@@ -15,6 +15,16 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
+Artisan::command('scanner:ffi-preflight', function (\App\Services\Scanner\PhpFfiTransport $transport): int {
+    // No external request, targets, configuration values or credentials printed.
+    $available = $transport->isAvailable();
+    $this->line(json_encode(['available' => $available, 'enabled' => (bool) config('scanner.php_ffi.enabled'),
+        'php' => PHP_VERSION, 'os' => PHP_OS_FAMILY,
+        'modules' => (array) config('scanner.php_ffi.email_modules')], JSON_THROW_ON_ERROR));
+
+    return $available ? Command::SUCCESS : Command::FAILURE;
+})->purpose('Verify the pinned native FFI engine and timeout compatibility patch, without network requests');
+
 Artisan::command('scanner:ops-snapshot', function (OpsMetricsService $metrics): int {
     $snapshot = $metrics->captureQueueSnapshot();
 

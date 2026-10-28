@@ -11,6 +11,12 @@
         <testsuite name="Feature">
             <directory>tests/Feature</directory>
         </testsuite>
+        <testsuite name="BrowserTransport">
+            <directory>tools/php-ffi/validation-tests</directory>
+        </testsuite>
+        <testsuite name="ProxyCooldown">
+            <directory>tools/proxy-cooldown</directory>
+        </testsuite>
     </testsuites>
     <source>
         <include>
@@ -29,6 +35,8 @@
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SCANNER_QUEUE_CONNECTION" value="sync"/>
+        <!-- TestCase binds an explicit FFI test adapter for existing Http::fake parser fixtures. -->
+        <env name="SCANNER_PHP_FFI_ENABLED" value="true"/>
         <env name="SESSION_DRIVER" value="array"/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>

@@ -23,7 +23,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Http::globalOptions([
-            'connect_timeout' => max(1, (float) config('scanner.http.connect_timeout_seconds', 3)),
+            'connect_timeout' => max(1, (float) config('scanner.http.connect_timeout_seconds', 10)),
         ]);
 
         LogViewer::auth(function (Request $request): bool {

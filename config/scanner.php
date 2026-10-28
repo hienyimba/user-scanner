@@ -724,7 +724,25 @@ return [
     'user_agent' => env('SCANNER_USER_AGENT', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'),
     'verify_ssl' => env('SCANNER_VERIFY_SSL', false),
     'http' => [
-        'connect_timeout_seconds' => (float) env('SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS', 3),
+        'connect_timeout_seconds' => (float) env('SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS', 10),
+    ],
+    'php_ffi' => [
+        // All browser-profiled email modules use FFI. Disabling is a stop
+        // switch: these modules fail closed rather than changing transport.
+        'enabled' => env('SCANNER_PHP_FFI_ENABLED', true),
+        'email_modules' => array_values(array_column(array_filter(
+            (require __DIR__.'/scanner_september_email.php')['modules'],
+            static fn (array $module): bool => trim((string) ($module['transport_profile'] ?? '')) !== ''
+        ), 'key')),
+        'impersonate' => env('SCANNER_PHP_FFI_IMPERSONATE', 'chrome131'),
+        'ca_bundle' => env('SCANNER_PHP_FFI_CA_BUNDLE', ''),
+    ],
+    'browser_transport' => [
+        'max_request_seconds' => 15,
+        'workflow_seconds' => 20,
+        'max_redirects' => 5,
+        'max_body_bytes' => 8 * 1024 * 1024,
+        'allow_loopback' => false, // isolated acceptance tests only
     ],
     'proxy_list' => $explicitProxyList !== [] ? $explicitProxyList : $configuredPoolProxyList,
     'proxies' => [
@@ -742,6 +760,7 @@ return [
             'failure_threshold' => (int) env('SCANNER_PROXY_FAILURE_THRESHOLD', 2),
             'cooldown_min_seconds' => (int) env('SCANNER_PROXY_COOLDOWN_MIN_SECONDS', 60),
             'cooldown_max_seconds' => (int) env('SCANNER_PROXY_COOLDOWN_MAX_SECONDS', 180),
+            'module_cooldown_seconds' => (int) env('SCANNER_PROXY_MODULE_COOLDOWN_SECONDS', 300),
             'wait_timeout_seconds' => (int) env('SCANNER_PROXY_WAIT_TIMEOUT_SECONDS', 20),
             'wait_retry_seconds' => (int) env('SCANNER_PROXY_WAIT_RETRY_SECONDS', 2),
             // Deliberate email retry geography. The pool is 46 U.S. and 4 UK
