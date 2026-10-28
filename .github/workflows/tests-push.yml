@@ -11,6 +11,10 @@ jobs:
   test:
     name: Test (PHPUnit + coverage) — PHP 8.4
     runs-on: ubuntu-latest
+    env:
+      APP_ENV: testing
+      # Synthetic test key only; no deployment credentials are needed.
+      APP_KEY: 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
     steps:
       - name: Checkout
         uses: actions/checkout@v4
