@@ -1,4 +1,4 @@
-name: Tests (pytest + coverage)
+name: Tests (PHPUnit + coverage)
 
 on:
   pull_request:
@@ -8,56 +8,40 @@ permissions:
 
 jobs:
   test:
-    name: Test (pytest + coverage) — ${{ matrix.python-version }}
+    name: Test (PHPUnit + coverage) — PHP 8.4
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10"]
-
+    env:
+      APP_ENV: testing
+      # Synthetic test key only; no deployment credentials are needed.
+      APP_KEY: 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
         with:
-          python-version: ${{ matrix.python-version }}
+          php-version: '8.4'
+          extensions: ffi, pcntl, sqlite3, pdo_sqlite
+          ini-values: ffi.enable=true
+          coverage: pcov
 
-      - name: Show Python info
+      - name: Install Composer dependencies
         run: |
-          python --version
-          which python
-          python -m pip --version
+          rm -rf -- vendor
+          composer install --no-interaction --prefer-dist
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml', '**/requirements*.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install package & test deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install .
-          pip install pytest pytest-cov
-
-      - name: Show installed packages
-        run: pip freeze | sed -n '1,200p'
-
-      - name: Run pytest with coverage
+      - name: Run PHPUnit with coverage
         run: |
           mkdir -p test-output
-          pytest -vv --maxfail=1 --disable-warnings \
-            --junitxml=test-output/report.xml \
-            --cov=user_scanner \
-            --cov-report=xml:test-output/coverage.xml \
-            --cov-report=term
+          php vendor/bin/phpunit --no-progress \
+            --log-junit test-output/report.xml \
+            --coverage-clover test-output/coverage.xml \
+            --coverage-text
 
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-reports-${{ matrix.python-version }}
+          name: test-reports-php84
           path: test-output

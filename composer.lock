@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "857634ede4e3f09cacccc339f8253e38",
+    "content-hash": "77bd48ae68d9566e6bef33277776903f",
     "packages": [
         {
             "name": "brick/math",
@@ -1052,6 +1052,77 @@
                 }
             ],
             "time": "2025-08-22T14:27:06+00:00"
+        },
+        {
+            "name": "hamaadraza/php-impersonate",
+            "version": "v2.0.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/hamaadraza/php-impersonate.git",
+                "reference": "c8f1e132e98c343432e287c253c6e96f9449dba4"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/hamaadraza/php-impersonate/zipball/c8f1e132e98c343432e287c253c6e96f9449dba4",
+                "reference": "c8f1e132e98c343432e287c253c6e96f9449dba4",
+                "shasum": ""
+            },
+            "require": {
+                "php": "^8.2"
+            },
+            "require-dev": {
+                "friendsofphp/php-cs-fixer": "^3.21.1",
+                "pestphp/pest": "^3.0",
+                "phpstan/extension-installer": "^1.4",
+                "phpstan/phpstan": "^2.2"
+            },
+            "suggest": {
+                "ext-ffi": "Enables the in-process FFI engine, which reuses connections instead of spawning curl per request. Without it every request forks a process."
+            },
+            "bin": [
+                "bin/php-impersonate-install"
+            ],
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Raza\\PHPImpersonate\\": "src"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "MIT"
+            ],
+            "authors": [
+                {
+                    "name": "Hamaad Raza",
+                    "email": "hamaadraza9@gmail.com",
+                    "role": "Developer"
+                }
+            ],
+            "description": "A PHP library for making HTTP requests with browser impersonation",
+            "homepage": "https://github.com/hamaadraza/php-impersonate",
+            "keywords": [
+                "anti-bot",
+                "browser-impersonation",
+                "curl-impersonate",
+                "ffi",
+                "http-client",
+                "ja3",
+                "ja4",
+                "scraping",
+                "tls-fingerprint"
+            ],
+            "support": {
+                "issues": "https://github.com/hamaadraza/php-impersonate/issues",
+                "source": "https://github.com/hamaadraza/php-impersonate"
+            },
+            "funding": [
+                {
+                    "url": "https://github.com/sponsors/hamaadraza",
+                    "type": "github"
+                }
+            ],
+            "time": "2026-09-04T06:33:49+00:00"
         },
         {
             "name": "laravel/framework",

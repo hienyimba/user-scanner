@@ -116,18 +116,18 @@ final class ProxyManagerService
      * @param  array<int, string>  $excludeRaw
      * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
-    public function acquire(int $offset = 0, array $excludeRaw = []): ?array
+    public function acquire(int $offset = 0, array $excludeRaw = [], array $scope = []): ?array
     {
-        return $this->acquireWithTierPreference(null, $offset, $excludeRaw);
+        return $this->acquireWithTierPreference(null, $offset, $excludeRaw, $scope);
     }
 
     /**
      * @param  array<int, string>  $excludeRaw
      * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
-    public function acquirePreferred(string $preferredTier, int $offset = 0, array $excludeRaw = []): ?array
+    public function acquirePreferred(string $preferredTier, int $offset = 0, array $excludeRaw = [], array $scope = []): ?array
     {
-        return $this->acquireWithTierPreference($preferredTier, $offset, $excludeRaw);
+        return $this->acquireWithTierPreference($preferredTier, $offset, $excludeRaw, $scope);
     }
 
     public function tierOf(string $rawProxy): string
@@ -153,23 +153,23 @@ final class ProxyManagerService
      * @param  array<int, string>  $excludeRaw
      * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
-    public function acquireWithGeography(?string $preferredTier, ?string $preferredCountry, int $offset = 0, array $excludeRaw = []): ?array
+    public function acquireWithGeography(?string $preferredTier, ?string $preferredCountry, int $offset = 0, array $excludeRaw = [], array $scope = []): ?array
     {
-        return $this->acquireWithPreference($preferredTier, $preferredCountry, $offset, $excludeRaw);
+        return $this->acquireWithPreference($preferredTier, $preferredCountry, $offset, $excludeRaw, $scope);
     }
 
     /**
      * @param  array<int, string>  $excludeRaw
      */
-    private function acquireWithTierPreference(?string $preferredTier, int $offset, array $excludeRaw): ?array
+    private function acquireWithTierPreference(?string $preferredTier, int $offset, array $excludeRaw, array $scope): ?array
     {
-        return $this->acquireWithPreference($preferredTier, null, $offset, $excludeRaw);
+        return $this->acquireWithPreference($preferredTier, null, $offset, $excludeRaw, $scope);
     }
 
     /**
      * @param  array<int, string>  $excludeRaw
      */
-    private function acquireWithPreference(?string $preferredTier, ?string $preferredCountry, int $offset, array $excludeRaw): ?array
+    private function acquireWithPreference(?string $preferredTier, ?string $preferredCountry, int $offset, array $excludeRaw, array $scope): ?array
     {
         if ($this->proxies === []) {
             return null;
@@ -180,9 +180,15 @@ final class ProxyManagerService
         $deadline = microtime(true) + $waitTimeoutSeconds;
 
         do {
-            $lease = $this->attemptAcquire($offset, $excludeRaw, $preferredTier, $preferredCountry);
+            $lease = $this->attemptAcquire($offset, $excludeRaw, $preferredTier, $preferredCountry, $scope);
             if ($lease !== null) {
                 return $lease;
+            }
+
+            // A service's advertised cooldown can last hours. Do not occupy a
+            // worker waiting for it, or silently send this check without proxy.
+            if ($this->moduleCooldownRetryAfter($scope, $excludeRaw) > 0) {
+                return null;
             }
 
             if (microtime(true) >= $deadline) {
@@ -217,6 +223,65 @@ final class ProxyManagerService
         });
     }
 
+    /** Persist a site/exit deadline independently of endpoint health and runs. */
+    public function recordModuleCooldown(string $rawProxy, array $scope, int $seconds): int
+    {
+        $key = $this->moduleCooldownCacheKey($this->proxyFingerprint($rawProxy), $scope);
+        if ($key === null || $seconds <= 0) {
+            return 0;
+        }
+
+        // Serialize max-expiry updates for this pair only. A shorter response
+        // arriving later must never overwrite a longer Retry-After deadline.
+        return Cache::lock($key.':lock', 5)->block(2, function () use ($key, $seconds): int {
+            $now = now()->getTimestamp();
+            $until = max((int) Cache::get($key, 0), $now + $seconds);
+            if (! Cache::put($key, $until, now()->addSeconds($until - $now + 60))) {
+                throw new \RuntimeException('Could not persist module/proxy cooldown');
+            }
+
+            return $until;
+        });
+    }
+
+    public function moduleCooldownRemaining(string $rawProxy, array $scope): int
+    {
+        $key = $this->moduleCooldownCacheKey($this->proxyFingerprint($rawProxy), $scope);
+
+        return $key === null ? 0 : max(0, (int) Cache::get($key, 0) - now()->getTimestamp());
+    }
+
+    /** Earliest eligibility when every non-excluded endpoint is cooling. */
+    public function moduleCooldownRetryAfter(array $scope, array $excludeRaw = []): int
+    {
+        $excluded = array_fill_keys(array_map([$this, 'proxyFingerprint'], $excludeRaw), true);
+        $keys = [];
+        foreach ($this->candidates as $fingerprint => $candidate) {
+            if (! isset($excluded[$fingerprint])) {
+                $key = $this->moduleCooldownCacheKey($fingerprint, $scope);
+                if ($key === null) {
+                    return 0;
+                }
+                $keys[] = $key;
+            }
+        }
+        if ($keys === []) {
+            return 0;
+        }
+        $deadlines = Cache::many($keys);
+        $now = now()->getTimestamp();
+        $earliest = PHP_INT_MAX;
+        foreach ($keys as $key) {
+            $until = (int) ($deadlines[$key] ?? 0);
+            if ($until <= $now) {
+                return 0;
+            }
+            $earliest = min($earliest, $until);
+        }
+
+        return $earliest - $now;
+    }
+
     public function reportFailure(string $rawProxy): void
     {
         $this->withHealthLock($rawProxy, function () use ($rawProxy): void {
@@ -243,7 +308,7 @@ final class ProxyManagerService
      * @param  array<int, string>  $excludeRaw
      * @return array{raw:string,proxy:string,token:string,expires:int}|null
      */
-    private function attemptAcquire(int $offset, array $excludeRaw, ?string $preferredTier = null, ?string $preferredCountry = null): ?array
+    private function attemptAcquire(int $offset, array $excludeRaw, ?string $preferredTier, ?string $preferredCountry, array $scope): ?array
     {
         $preferredCountry = $preferredCountry !== null ? strtoupper($preferredCountry) : null;
         $maxConcurrentPerProxy = max(1, (int) config('scanner.proxies.behavior.max_concurrent_per_proxy', 2));
@@ -272,7 +337,8 @@ final class ProxyManagerService
         // Batch-read health without a pool-wide mutex. Each slot claim is an
         // independent atomic cache lock, even on the database cache driver.
         $healthKeys = array_map(fn (array $candidate): string => $this->cooldownCacheKey($candidate['fingerprint']), $this->candidates);
-        $cooldowns = $healthKeys !== [] ? Cache::many(array_values($healthKeys)) : [];
+        $moduleKeys = array_filter(array_map(fn (array $candidate): ?string => $this->moduleCooldownCacheKey($candidate['fingerprint'], $scope), $this->candidates));
+        $cooldowns = $healthKeys !== [] ? Cache::many([...array_values($healthKeys), ...array_values($moduleKeys)]) : [];
         $ttl = max(30, (int) config('scanner.async.job_timeout', 60) + 30,
             (int) config('scanner.proxies.behavior.lease_seconds', 90));
         $now = now()->getTimestamp();
@@ -292,11 +358,27 @@ final class ProxyManagerService
             if ((int) ($cooldowns[$this->cooldownCacheKey($fingerprint)] ?? 0) > $now) {
                 continue;
             }
+            $moduleKey = $this->moduleCooldownCacheKey($fingerprint, $scope);
+            if ($moduleKey !== null && (int) ($cooldowns[$moduleKey] ?? 0) > $now) {
+                continue;
+            }
 
             for ($slot = 0; $slot < $maxConcurrentPerProxy; $slot++) {
                 $lock = Cache::lock(self::LEASE_PREFIX.$fingerprint.':'.$slot, $ttl);
                 if (! $lock->get()) {
                     continue;
+                }
+                // A previous owner may publish a cooldown and release between
+                // our batched read and slot claim. Recheck while owning the slot.
+                try {
+                    if ($moduleKey !== null && (int) Cache::get($moduleKey, 0) > now()->getTimestamp()) {
+                        $lock->release();
+
+                        continue;
+                    }
+                } catch (\Throwable $error) {
+                    $lock->release();
+                    throw $error;
                 }
                 $token = $lock->owner();
                 $expires = now()->getTimestamp() + $ttl;
@@ -434,6 +516,17 @@ final class ProxyManagerService
     private function cooldownCacheKey(string $fingerprint): string
     {
         return 'scanner:proxy:cooldown:'.$fingerprint;
+    }
+
+    private function moduleCooldownCacheKey(string $fingerprint, array $scope): ?string
+    {
+        $mode = strtolower(trim((string) ($scope['mode'] ?? '')));
+        $module = strtolower(trim((string) ($scope['module'] ?? '')));
+        if (! in_array($mode, ['username', 'email'], true) || $module === '') {
+            return null;
+        }
+
+        return 'scanner:proxy:module:v1:cooldown:'.hash('sha256', $mode.':'.$module).':'.$fingerprint;
     }
 
     /**

@@ -1,4 +1,4 @@
-name: Lint & Type Checks
+name: PHP Syntax Checks
 
 on:
   pull_request:
@@ -8,28 +8,20 @@ permissions:
 
 jobs:
   lint:
-    name: Lint & types (ruff + mypy)
+    name: PHP syntax
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: [3.11]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
         with:
-          python-version: ${{ matrix.python-version }}
+          php-version: '8.4'
+          coverage: none
 
-      - name: Install linters
-        run: |
-          python -m pip install --upgrade pip
-          pip install httpx colorama types-colorama
-          pip install ruff mypy
-
-      - name: Run ruff
-        run: ruff check .
-
-      - name: Run mypy
-        run: mypy user_scanner
+      - name: Check PHP syntax
+        run: >-
+          git ls-files -z -- '*.php'
+          ':!OLD/**' ':!laravel_app/**' ':!user-*/**' ':!vendor/**'
+          | xargs -0 -r -n 1 php -l

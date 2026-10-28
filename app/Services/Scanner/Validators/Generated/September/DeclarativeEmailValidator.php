@@ -5,8 +5,12 @@ declare(strict_types=1);
 namespace App\Services\Scanner\Validators\Generated\September;
 
 use App\DTO\ScanResult;
+use App\Services\Scanner\NativeTransportException;
+use App\Services\Scanner\PhpFfiTransport;
+use App\Services\Scanner\ScannerDiagnostics;
 use App\Services\Scanner\Validators\Generated\BaseGeneratedValidator;
 use GuzzleHttp\Cookie\CookieJar;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
@@ -54,6 +58,10 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
     public function check(string $target, array $options = []): ScanResult
     {
         $startedAt = microtime(true);
+        if (trim((string) ($this->definition['transport_profile'] ?? '')) !== '') {
+            $options['_browser_deadline_ns'] = min((int) ($options['_scanner_deadline_ns'] ?? PHP_INT_MAX),
+                hrtime(true) + (int) (max(1, (float) config('scanner.browser_transport.workflow_seconds', 20)) * 1e9));
+        }
 
         try {
             $context = [
@@ -207,7 +215,8 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
             return $this->result(
                 target: $target,
                 status: 'Error',
-                reason: $e->getMessage(),
+                reason: ScannerDiagnostics::exception($e, 'email.workflow', ['module' => $this->key(), 'mode' => 'email', 'redact_values' => [$target]]),
+                metadata: $e instanceof NativeTransportException ? ['transport_error' => $e->diagnostics] : [],
                 options: $options,
                 startedAt: $startedAt,
             );
@@ -220,6 +229,25 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
      * @param  array<string, mixed>  $options
      */
     private function send(array $request, array $context, array $options, CookieJar $cookieJar): Response
+    {
+        $transportProfile = trim((string) ($this->definition['transport_profile'] ?? ''));
+        if ($transportProfile !== '') {
+            if (! PhpFfiTransport::selected('email', $this->key())) {
+                throw new ConnectionException('PHP FFI transport disabled for profiled module');
+            }
+
+            return $this->sendViaFfi($request, $context, $options, $cookieJar, $transportProfile);
+        }
+
+        return $this->sendViaHttpClient($request, $context, $options, $cookieJar);
+    }
+
+    /**
+     * @param  array<string, mixed>  $request
+     * @param  array<string, scalar>  $context
+     * @param  array<string, mixed>  $options
+     */
+    private function sendViaHttpClient(array $request, array $context, array $options, CookieJar $cookieJar): Response
     {
         $method = strtoupper((string) ($request['method'] ?? 'GET'));
         $url = $this->interpolate((string) ($request['url'] ?? ''), $context);
@@ -258,6 +286,58 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
             'query' => $query,
             'json' => is_array($body) ? $body : null,
         ]);
+    }
+
+    /**
+     * Route one request through the native browser-impersonating transport
+     * when the module definition pins a `transport_profile`. The profile name
+     * preserves the upstream impersonation target; only headers the
+     * module declares are sent, so the impersonated browser's own defaults
+     * (User-Agent, Accept, sec-ch-ua) stay consistent with its TLS fingerprint.
+     *
+     * @param  array<string, mixed>  $request
+     * @param  array<string, scalar>  $context
+     * @param  array<string, mixed>  $options
+     */
+    private function sendViaFfi(
+        array $request,
+        array $context,
+        array $options,
+        CookieJar $cookieJar,
+        string $profile,
+    ): Response {
+        $spec = [
+            'deadline_ns' => $options['_browser_deadline_ns'] ?? PHP_INT_MAX,
+            'redact_values' => [(string) $context['target']],
+            'impersonate' => $this->impersonateTarget($profile),
+            'proxy' => $options['proxy'] ?? null,
+            'timeout' => max(1, (int) ($request['timeout'] ?? 15)),
+            'follow_redirects' => (bool) ($request['follow_redirects'] ?? true),
+            'method' => strtoupper((string) ($request['method'] ?? 'GET')),
+            'url' => $this->interpolate((string) ($request['url'] ?? ''), $context),
+            'headers' => $this->interpolateValue((array) ($request['headers'] ?? []), $context),
+            'query' => $this->interpolateValue((array) ($request['query'] ?? []), $context),
+            'body_mode' => (string) ($request['body_mode'] ?? 'json'),
+            'body' => array_key_exists('body', $request)
+                ? $this->interpolateValue($request['body'], $context)
+                : null,
+        ];
+
+        return app(PhpFfiTransport::class)->send($spec, $cookieJar);
+    }
+
+    private function impersonateTarget(string $profile): string
+    {
+        $default = (string) config('scanner.php_ffi.impersonate', 'chrome131');
+        // Python accepted a moving "chrome" alias; native impersonation needs
+        // a concrete supported version. Pin generic Chrome to our default.
+        if (in_array($profile, ['browser', 'chrome'], true)) {
+            return $default;
+        }
+
+        return preg_match('/^(chrome|safari|edge|firefox)[0-9_]+$/', $profile) === 1
+            ? $profile
+            : $default;
     }
 
     /** @param array<string, mixed>|string $body @param array<string, string> $headers */
@@ -536,6 +616,7 @@ final class DeclarativeEmailValidator extends BaseGeneratedValidator
         ?Response $response = null,
         ?float $startedAt = null,
     ): ScanResult {
+        $reason = ScannerDiagnostics::redact($reason, [$target]);
         $metadata = $this->mergeRequestDiagnostics($metadata, $options, $response, $startedAt);
 
         return new ScanResult(

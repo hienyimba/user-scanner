@@ -1419,7 +1419,7 @@ return [
                 'method' => 'GET', 'url' => 'https://profile.threadless.com/artist/shops/',
                 'capture' => ['csrf' => ['from' => 'body_regex', 'pattern' => '~name=[\'\"]csrfmiddlewaretoken[\'\"]\\s+value=[\'\"]([^\'\"]+)~', 'error_reason' => 'Threadless CSRF token extraction failed']],
             ]],
-            'request' => ['method' => 'POST', 'url' => 'https://profile.threadless.com/artist/shops/', 'body_mode' => 'form', 'headers' => ['x-requested-with' => 'XMLHttpRequest'], 'body' => ['validate' => 'true', 'email' => '{target}', 'csrfmiddlewaretoken' => '{csrf}']],
+            'request' => ['method' => 'POST', 'url' => 'https://profile.threadless.com/artist/shops/', 'body_mode' => 'form', 'headers' => ['x-requested-with' => 'XMLHttpRequest', 'Origin' => 'https://profile.threadless.com', 'Referer' => 'https://profile.threadless.com/artist/shops/', 'sec-fetch-site' => 'same-origin', 'sec-fetch-mode' => 'cors', 'sec-fetch-dest' => 'empty'], 'body' => ['validate' => 'true', 'email' => '{target}', 'csrfmiddlewaretoken' => '{csrf}']],
             'rules' => [
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'is_valid', 'operator' => 'falsy']]], 'status' => 'Registered'],
                 ['when' => ['all' => [['field' => 'status', 'value' => 200], ['field' => 'json', 'path' => 'is_valid', 'operator' => 'truthy']]], 'status' => 'Not Registered'],
@@ -1631,7 +1631,7 @@ return [
         ],
         [
             'key' => 'redtube', 'category' => 'adult', 'site_name' => 'Redtube',
-            'site_url' => 'https://redtube.com', 'source' => 'email_scan/adult/redtube.py',
+            'site_url' => 'https://redtube.com', 'source' => 'email_scan/adult/redtube.py', 'transport_profile' => 'browser',
             'bootstrap' => [['method' => 'GET', 'url' => 'https://www.redtube.com/register', 'headers' => ['User-Agent' => 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Mobile Safari/537.36', 'Referer' => 'https://www.redtube.com/register'], 'capture' => ['token' => ['from' => 'body_regex', 'pattern' => '~page_params\\.token\\s*=\\s*"([^"]+)"~', 'error_reason' => 'RedTube dynamic token extraction failed']]]],
             'request' => ['method' => 'POST', 'url' => 'https://www.redtube.com/user/create_account_check', 'body_mode' => 'form', 'query' => ['token' => '{token}'], 'headers' => ['X-Requested-With' => 'XMLHttpRequest', 'Origin' => 'https://www.redtube.com', 'Referer' => 'https://www.redtube.com/register', 'Content-Type' => 'application/x-www-form-urlencoded; charset=UTF-8'], 'body' => ['token' => '{token}', 'check_what' => 'email', 'email' => '{target}']],
             'rules' => [

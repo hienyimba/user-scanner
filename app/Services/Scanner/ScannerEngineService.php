@@ -178,7 +178,7 @@ final class ScannerEngineService
     /**
      * @param  array<string, mixed>  $options
      */
-    public function runPlannedValidator(string $mode, string $validatorKey, string $target, array $options = []): ScanResult
+    public function runPlannedValidator(string $mode, string $validatorKey, string $target, array $options = [], bool $proxyLeaseManaged = false): ScanResult
     {
         $validator = $this->resolveValidator($mode, $validatorKey);
         if ($validator === null) {
@@ -194,13 +194,13 @@ final class ScannerEngineService
             ]);
         }
 
-        return $this->runValidator($validator, $target, $mode, $options);
+        return $this->runValidator($validator, $target, $mode, $options, $proxyLeaseManaged);
     }
 
     /**
      * @param  array<string, mixed>  $options
      */
-    private function runValidator(ValidatorContract $validator, string $target, string $mode, array $options): ScanResult
+    private function runValidator(ValidatorContract $validator, string $target, string $mode, array $options, bool $proxyLeaseManaged = false): ScanResult
     {
         $skipFlag = $this->moduleSkips->activeSkipFor($mode, $validator->key());
         if ($skipFlag !== null) {
@@ -248,6 +248,15 @@ final class ScannerEngineService
                 ? $this->proxyManager->resolve($options['proxy'])
                 : null;
 
+            if ($proxy !== null && ! $proxyLeaseManaged) {
+                return ProxyExecutionPolicy::runExplicit($this->proxyManager, $proxy,
+                    fn (?string $route): ScanResult => $this->executeValidator($validator, $target, $mode, $options, $route),
+                    fn (string $reason): ScanResult => $this->proxyErrorResult($validator, $target, $mode, $reason),
+                    ['mode' => $mode, 'module' => $validator->key(),
+                        'target_hash' => hash_hmac('sha256', $target, (string) config('app.key', 'scanner')),
+                        'redact_values' => [$target]]);
+            }
+
             return $this->executeValidator($validator, $target, $mode, $options, $proxy);
         }
 
@@ -268,21 +277,21 @@ final class ScannerEngineService
             options: $options,
             offset: (int) Arr::get($options, 'proxy_offset', 0),
             attempt: fn (?string $proxy): ScanResult => $this->executeValidator($validator, $target, $mode, $options, $proxy),
-            errorResult: fn (string $reason): ScanResult => ScanResult::fromArray([
-                'target' => $target,
-                'category' => strtolower($validator->category()),
-                'site_name' => $validator->siteName(),
-                'url' => $validator->siteUrl(),
-                'status' => 'Error',
-                'reason' => $reason,
-                'mode' => $mode,
-                'key' => $validator->key(),
-            ]),
+            errorResult: fn (string $reason): ScanResult => $this->proxyErrorResult($validator, $target, $mode, $reason),
             fallbackWithoutProxyWhenPoolEmpty: true,
             context: ['mode' => $mode, 'module' => $validator->key(),
                 'target_hash' => hash_hmac('sha256', $target, (string) config('app.key', 'scanner')),
                 'redact_values' => [$target]],
         );
+    }
+
+    private function proxyErrorResult(ValidatorContract $validator, string $target, string $mode, string $reason): ScanResult
+    {
+        return ScanResult::fromArray([
+            'target' => $target, 'category' => strtolower($validator->category()),
+            'site_name' => $validator->siteName(), 'url' => $validator->siteUrl(),
+            'status' => 'Error', 'reason' => $reason, 'mode' => $mode, 'key' => $validator->key(),
+        ]);
     }
 
     /**

@@ -49,6 +49,25 @@ final class JuneManualValidatorTest extends TestCase
         $this->assertNotContains('polarsteps', $catalog);
     }
 
+    public function test_bunny_password_rejection_does_not_claim_an_email_is_unregistered(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['https://api.bunny.net/auth/register' => Http::response(['Message' => 'Passwords must have 1 number', 'Field' => 'Password'], 200)]);
+        $result = (new \App\Services\Scanner\Validators\Generated\Email\BunnyValidator())->check('person@example.test');
+        $this->assertSame('Error', $result->status);
+        $this->assertStringContainsString('account status unknown', $result->reason);
+        Http::assertSentCount(1);
+        Http::assertSent(static fn ($request): bool => $request['Email'] === 'person@example.test'
+            && $request['Password'] === '');
+    }
+
+    public function test_bunny_explicit_email_duplicate_is_registered(): void
+    {
+        Http::fake(['https://api.bunny.net/auth/register' => Http::response(['Message' => 'Email is already in use', 'Field' => 'Email'], 422)]);
+        $result = (new \App\Services\Scanner\Validators\Generated\Email\BunnyValidator())->check('person@example.test');
+        $this->assertSame('Registered', $result->status);
+    }
+
     /**
      * @return array<int, array{0:string,1:string,2:array<int, array{status:int, body?:string, json?:array<mixed>}>,3:string}>
      */

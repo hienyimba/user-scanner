@@ -26,7 +26,7 @@ SCANNER_EMAIL_RUN_WINDOW=15
 SCANNER_USERNAME_RUN_WINDOW=15
 SCANNER_ASYNC_JOB_TIMEOUT=60
 SCANNER_ASYNC_JOB_TRIES=1
-SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS=3
+SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS=10
 
 SCANNER_PROXY_PROVIDER=oxylabs_isp
 SCANNER_PROXY_MAX_CONCURRENT_PER_IP=1
@@ -61,7 +61,7 @@ Supervisor configuration, safe cutover, verification and rollback procedure.
 | --- | --- | --- | --- |
 | `SCANNER_USER_AGENT` | Default User-Agent used by generated validators that do not set their own headers. | Leave unset or use a current desktop Chrome-like UA. | A realistic UA reduces avoidable bot blocks. Leaving it unset uses the app default from `config/scanner.php`. |
 | `SCANNER_VERIFY_SSL` | Controls TLS certificate verification for scanner HTTP requests. | `false` for this broad scanner; `true` only after validating all important modules. | Many targets and proxy paths can have TLS quirks. `false` favors scanner reliability; `true` is stricter but may create false module errors. |
-| `SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS` | Global connection timeout applied to Laravel HTTP/Guzzle requests. | `3` | Fails fast when a proxy or host cannot establish a connection, preventing slow connection hangs from inflating p95. |
+| `SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS` | Shared connection timeout for Laravel HTTP/Guzzle and native FFI requests. | `10` | Allows slow but working proxy handshakes to complete; shorter request and workflow budgets still apply. |
 
 ## Async And Queue Settings
 
@@ -157,7 +157,7 @@ This is a temporary throughput preset. Return to `SCANNER_PROXY_MAX_CONCURRENT_P
 ```dotenv
 SCANNER_PROXY_MAX_RETRY_PER_MODULE=0
 SCANNER_PROXY_RETRY_TIMEOUT_FAILURES=false
-SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS=3
+SCANNER_HTTP_CONNECT_TIMEOUT_SECONDS=10
 SCANNER_METADATA_TIMEOUT_SECONDS=6
 ```
 

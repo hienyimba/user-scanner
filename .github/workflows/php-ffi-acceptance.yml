@@ -1,0 +1,97 @@
+name: PHP FFI acceptance (no external scans)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/**']
+    paths:
+      - 'app/**'
+      - 'bootstrap/**'
+      - 'database/**'
+      - 'routes/console.php'
+      - 'tools/php-ffi/**'
+      - 'tools/proxy-cooldown/**'
+      - 'config/scanner*.php'
+      - 'tests/TestCase.php'
+      - 'phpunit.xml'
+      - '.gitignore'
+      - '.github/workflows/php-ffi-acceptance.yml'
+      - 'composer.*'
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'bootstrap/**'
+      - 'database/**'
+      - 'routes/console.php'
+      - 'tools/php-ffi/**'
+      - 'tools/proxy-cooldown/**'
+      - 'config/scanner*.php'
+      - 'tests/TestCase.php'
+      - 'phpunit.xml'
+      - '.gitignore'
+      - '.github/workflows/php-ffi-acceptance.yml'
+      - 'composer.*'
+permissions:
+  contents: read
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      APP_ENV: testing
+      APP_KEY: 'base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+      DB_CONNECTION: sqlite
+      DB_DATABASE: ':memory:'
+      DB_URL: ''
+      CACHE_STORE: array
+      SESSION_DRIVER: array
+      QUEUE_CONNECTION: sync
+      SCANNER_QUEUE_CONNECTION: sync
+      LOG_CHANNEL: 'null'
+      SCANNER_PHP_FFI_ENABLED: 'true'
+    steps:
+      - name: Check out release sources
+        uses: actions/checkout@v4
+      - name: Verify tracked validation package
+        run: >-
+          git ls-files --error-unmatch tests/TestCase.php
+          tools/php-ffi/validation-tests/*.php tools/proxy-cooldown/*.php
+      - name: Set up PHP 8.4 with native FFI
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: ffi, pcntl, sqlite3, pdo_sqlite
+          ini-values: ffi.enable=true
+          coverage: none
+      - name: Install pinned Composer dependencies and compatibility patches
+        id: dependencies
+        run: |
+          rm -rf -- vendor
+          composer install --no-interaction --prefer-dist
+      - name: Verify native engine on Linux
+        run: php artisan scanner:ffi-preflight | tee ffi-preflight.json
+      - name: Run cooldown regressions
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: php vendor/bin/phpunit tools/proxy-cooldown --no-progress --fail-on-empty-test-suite --log-junit cooldown-regression.xml
+      - name: Run transport and PHP harness regressions
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: php vendor/bin/phpunit tools/php-ffi/validation-tests --no-progress --fail-on-empty-test-suite --log-junit transport-regression.xml
+      - name: Run native error diagnostics acceptance
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: php tools/php-ffi/diagnostics-acceptance.php --output ffi-diagnostics.json
+      - name: Run four-worker native acceptance
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: php tools/php-ffi/acceptance.php --workers 4 --output ffi-acceptance.json
+      - name: Upload Linux PHP 8.4 validation evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: php84-linux-ffi-acceptance
+          path: |
+            ffi-preflight.json
+            cooldown-regression.xml
+            transport-regression.xml
+            ffi-acceptance.json
+            ffi-diagnostics.json

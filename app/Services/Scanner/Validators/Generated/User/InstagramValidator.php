@@ -168,7 +168,7 @@ final class InstagramValidator extends BaseGeneratedValidator
 
                 $decoded = json_decode(html_entity_decode($script, ENT_QUOTES | ENT_HTML5), true);
                 $user = is_array($decoded) ? $this->findNestedKey($decoded, 'xig_user_by_username') : null;
-                if (! is_array($user)) {
+                if (! is_array($user) || strcasecmp((string) ($user['username'] ?? ''), $target) !== 0) {
                     continue;
                 }
 

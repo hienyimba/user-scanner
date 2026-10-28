@@ -39,8 +39,6 @@ final class ProxyPoolIntegrationTest extends TestCase
     public function test_structured_proxy_pool_populates_sanitized_default_proxy_list(): void
     {
         $this->assertSame([
-            'disp.oxylabs.io:8030',
-            'disp.oxylabs.io:8029',
             'disp.oxylabs.io:8028',
             'disp.oxylabs.io:8027',
             'disp.oxylabs.io:8026',
@@ -69,10 +67,32 @@ final class ProxyPoolIntegrationTest extends TestCase
             'disp.oxylabs.io:8003',
             'disp.oxylabs.io:8002',
             'disp.oxylabs.io:8001',
+            'disp.oxylabs.io:8060',
+            'disp.oxylabs.io:8059',
+            'disp.oxylabs.io:8058',
+            'disp.oxylabs.io:8057',
+            'disp.oxylabs.io:8056',
+            'disp.oxylabs.io:8055',
+            'disp.oxylabs.io:8054',
+            'disp.oxylabs.io:8053',
+            'disp.oxylabs.io:8052',
+            'disp.oxylabs.io:8049',
+            'disp.oxylabs.io:8048',
+            'disp.oxylabs.io:8047',
+            'disp.oxylabs.io:8046',
+            'disp.oxylabs.io:8045',
+            'disp.oxylabs.io:8044',
+            'disp.oxylabs.io:8043',
+            'disp.oxylabs.io:8042',
+            'disp.oxylabs.io:8041',
+            'disp.oxylabs.io:8038',
+            'disp.oxylabs.io:8037',
+            'disp.oxylabs.io:8035',
+            'disp.oxylabs.io:8032',
         ], config('scanner.proxy_list'));
     }
 
-    public function test_structured_proxy_pool_reserves_gb_endpoints_as_fallbacks(): void
+    public function test_structured_proxy_pool_keeps_the_configured_gb_fallback_reserve(): void
     {
         $fallbackPorts = array_values(array_map(
             static fn (array $proxy): int => (int) $proxy['port'],
@@ -82,7 +102,12 @@ final class ProxyPoolIntegrationTest extends TestCase
             ),
         ));
 
-        $this->assertSame([8020, 8019, 8007, 8006], $fallbackPorts);
+        $this->assertSame([8020, 8019], $fallbackPorts);
+        foreach (config('scanner.proxies.pool') as $proxy) {
+            if ($proxy['tier'] === 'fallback') {
+                $this->assertSame('GB', $proxy['country_code']);
+            }
+        }
     }
 
     public function test_proxy_manager_resolves_configured_pool_members_with_credentials(): void
