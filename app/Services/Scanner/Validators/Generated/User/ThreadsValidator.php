@@ -65,8 +65,9 @@ final class ThreadsValidator extends BaseGeneratedValidator
             return ['Taken', ''];
         }
 
-        if (str_contains($body, '<title>Threads • Log in</title>')
-            || str_contains($body, 'content="https://www.threads.com/login')) {
+        if ($response->status() === 200
+            && (str_contains($body, '<title>Threads • Log in</title>')
+                || str_contains($body, 'content="https://www.threads.com/login'))) {
             return ['Available', ''];
         }
 

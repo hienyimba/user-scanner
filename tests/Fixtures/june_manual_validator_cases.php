@@ -1326,7 +1326,7 @@ return [
         'responses' => [
             [
                 'status' => 200,
-                'body' => 'profile ok',
+                'body' => '<html><head><link rel="canonical" href="https://www.deviantart.com/alice"></head></html>',
             ],
         ],
         'expected' => 'Found',
@@ -1994,7 +1994,7 @@ return [
                 ],
             ],
         ],
-        'expected' => 'Not Registered',
+        'expected' => 'Error',
     ],
     [
         'class' => 'App\\Services\\Scanner\\Validators\\Generated\\Email\\AmaValidator',

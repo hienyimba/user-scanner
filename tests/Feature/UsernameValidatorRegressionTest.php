@@ -67,6 +67,7 @@ final class UsernameValidatorRegressionTest extends TestCase
         // production auto-skip catalog (academia/liberapay/reddit/apexlegends
         // are live-skipped).
         config()->set('scanner.auto_skip.username', []);
+        Http::preventStrayRequests();
     }
 
     public function test_get_query_parameters_embedded_in_request_url_are_preserved(): void
@@ -105,9 +106,9 @@ final class UsernameValidatorRegressionTest extends TestCase
     }
 
     #[DataProvider('generatedStatusValidatorProvider')]
-    public function test_generated_status_validators_handle_basic_taken_and_available_responses(string $className, int $status, string $expected): void
+    public function test_generated_status_validators_handle_basic_taken_and_available_responses(string $className, int $status, string $expected, string $body = '<html></html>'): void
     {
-        Http::fake(['*' => Http::response('<html></html>', $status)]);
+        Http::fake(['*' => Http::response($body, $status)]);
 
         $result = (new $className())->check('hienyimba');
 
@@ -354,7 +355,7 @@ final class UsernameValidatorRegressionTest extends TestCase
         );
 
         $this->assertSame('Found', $result->status);
-        $this->assertSame('https://app.daily.dev/kaifcodec', $result->profileUrl);
+        $this->assertSame('https://daily.dev/kaifcodec', $result->profileUrl);
         $this->assertSame('Kaif Codec', $result->metadata['display_name']);
         $this->assertSame('kaifcodec', $result->metadata['username']);
         $this->assertSame('usr_123', $result->metadata['daily_dev_user_id']);
@@ -1120,34 +1121,12 @@ final class UsernameValidatorRegressionTest extends TestCase
     public function test_sourceforge_profile_is_taken_and_extracts_joined_and_project_metadata(): void
     {
         Http::fake([
-            '*' => Http::response(
-                <<<'HTML'
-                <html>
-                <head>
-                    <title>Christian Schenk / SourceForge</title>
-                    <meta property="og:title" content="Christian Schenk / SourceForge" />
-                </head>
-                <body>
-                    <h1>Christian Schenk</h1>
-                    <h3>Personal Data</h3>
-                    <dl>
-                        <dt>Username:</dt>
-                        <dd>csc</dd>
-                        <dt>Joined:</dt>
-                        <dd>2000-08-22 20:23:38</dd>
-                    </dl>
-                    <h3>Projects</h3>
-                    <ul>
-                        <li><a href="/p/makertf/">Makertf</a></li>
-                        <li><a href="/p/miktex/">MiKTeX</a></li>
-                    </ul>
-                    <h3>Personal Tools</h3>
-                </body>
-                </html>
-                HTML,
-                200,
-                ['Content-Type' => 'text/html']
-            ),
+            'https://sourceforge.net/rest/u/csc/profile' => Http::response([
+                'username' => 'csc', 'name' => 'Christian Schenk',
+                'joined' => '2000-08-22T20:23:38+00:00',
+                'projects' => [['name' => 'makertf'], ['name' => 'miktex']],
+                'localization' => ['city' => 'Berlin', 'country' => 'Germany'],
+            ], 200),
         ]);
 
         $result = app(ScannerEngineService::class)->runPlannedValidator(
@@ -1158,18 +1137,21 @@ final class UsernameValidatorRegressionTest extends TestCase
         );
 
         $this->assertSame('Found', $result->status);
-        $this->assertSame('https://sourceforge.net/u/csc/', $result->profileUrl);
+        $this->assertSame('https://sourceforge.net/u/csc/profile/', $result->profileUrl);
         $this->assertSame('Christian Schenk', $result->metadata['display_name']);
         $this->assertSame('csc', $result->metadata['username']);
         $this->assertSame('2000-08-22T20:23:38+00:00', $result->metadata['created_at']);
         $this->assertSame(2, $result->metadata['projects_count']);
-        $this->assertSame([
-            'https://sourceforge.net/p/makertf/',
-            'https://sourceforge.net/p/miktex/',
-        ], $result->metadata['external_links']);
-        $this->assertContains('html_profile', $result->metadata['sources']);
+        $this->assertSame(['makertf', 'miktex'], $result->metadata['projects']);
+        $this->assertSame('Berlin, Germany', $result->metadata['location']);
+        $this->assertContains('api_json', $result->metadata['sources']);
         $this->assertContains('projects_count', $result->metadata['evidence']);
         $this->assertSame(4, $result->metadata['observed_metadata_level']);
+        Http::assertSentCount(1);
+        Http::assertSent(static fn (Request $request): bool => $request->method() === 'GET'
+            && $request->url() === 'https://sourceforge.net/rest/u/csc/profile'
+            && $request->hasHeader('Accept', 'application/json')
+            && $request->hasHeader('User-Agent', 'curl/8.0.1'));
     }
 
     public function test_behance_profile_is_taken_and_preserves_primary_metadata(): void
@@ -1987,7 +1969,7 @@ final class UsernameValidatorRegressionTest extends TestCase
         );
 
         $this->assertSame('Found', $result->status);
-        $this->assertSame('https://500px.com/prsths', $result->profileUrl);
+        $this->assertSame('https://500px.com/p/prsths', $result->profileUrl);
         $this->assertSame('Prsths', $result->metadata['display_name']);
         $this->assertSame('prsths', $result->metadata['username']);
         $this->assertSame('Photographer and traveler.', $result->metadata['bio']);
@@ -2176,7 +2158,9 @@ final class UsernameValidatorRegressionTest extends TestCase
     public function test_reddit_api_profile_is_taken_and_preserves_primary_metadata(): void
     {
         Http::fake([
-            '*' => Http::response([
+            'https://www.reddit.com/' => Http::response('<html>Reddit</html>', 200),
+            'https://www.reddit.com/api/username_available.json*' => Http::response('false', 200, ['Content-Type' => 'application/json']),
+            'https://www.reddit.com/user/spez/about.json' => Http::response([
                 'kind' => 't2',
                 'data' => [
                     'name' => 'spez',
@@ -2216,6 +2200,9 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame('2005-12-08T07:46:43+00:00', $result->metadata['created_at']);
         $this->assertContains('api_json', $result->metadata['sources']);
         $this->assertSame(4, $result->metadata['observed_metadata_level']);
+        Http::assertSentCount(3);
+        Http::assertSent(static fn (Request $request): bool => $request->url() === 'https://www.reddit.com/api/username_available.json?user=spez'
+            && $request->method() === 'GET');
     }
 
     public function test_disqus_api_profile_is_taken_and_preserves_primary_metadata(): void
@@ -2671,24 +2658,12 @@ final class UsernameValidatorRegressionTest extends TestCase
     public function test_stackoverflow_search_result_is_taken_and_preserves_primary_metadata(): void
     {
         Http::fake([
-            '*' => Http::response(
-                <<<'HTML'
-                <html>
-                <body>
-                    <div class="grid--item user-info">
-                        <div class="user-details">
-                            <a href="/users/123456/kaifcodec">kaifcodec</a>
-                        </div>
-                        <span class="user-location">Lagos, Nigeria</span>
-                        <span title="this user has a total reputation: 12,345">12.3k</span>
-                        <img src="//www.gravatar.com/avatar/abcdef?s=64&amp;d=identicon&amp;r=PG">
-                    </div>
-                </body>
-                </html>
-                HTML,
-                200,
-                ['Content-Type' => 'text/html']
-            ),
+            'https://api.stackexchange.com/2.3/users*' => Http::response(['items' => [[
+                'user_id' => 123456, 'display_name' => 'kaifcodec',
+                'location' => 'Lagos, Nigeria', 'reputation' => 12345,
+                'profile_image' => 'https://www.gravatar.com/avatar/abcdef?s=64&d=identicon&r=PG',
+                'link' => 'https://stackoverflow.com/users/123456/kaifcodec',
+            ]]], 200),
         ]);
 
         $result = app(ScannerEngineService::class)->runPlannedValidator(
@@ -2702,10 +2677,14 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame('https://stackoverflow.com/users/filter?search=kaifcodec', $result->profileUrl);
         $this->assertSame('kaifcodec', $result->metadata['username']);
         $this->assertSame('Lagos, Nigeria', $result->metadata['location']);
-        $this->assertSame('12,345', $result->metadata['reputation']);
+        $this->assertSame(12345, $result->metadata['reputation']);
+        $this->assertSame(123456, $result->metadata['stackoverflow_user_id']);
         $this->assertSame('https://www.gravatar.com/avatar/abcdef?s=64&d=identicon&r=PG', $result->metadata['avatar_url']);
-        $this->assertContains('profile_html', $result->metadata['sources']);
+        $this->assertContains('stackexchange_api', $result->metadata['sources']);
         $this->assertSame(4, $result->metadata['observed_metadata_level']);
+        Http::assertSentCount(1);
+        Http::assertSent(static fn (Request $request): bool => $request->method() === 'GET'
+            && $request['site'] === 'stackoverflow' && $request['inname'] === 'kaifcodec');
     }
 
     public function test_trello_api_profile_is_taken_and_preserves_primary_metadata(): void
@@ -3190,29 +3169,24 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame(4, $result->metadata['observed_metadata_level']);
     }
 
-    public function test_instagram_api_profile_is_taken_and_preserves_primary_metadata(): void
+    public function test_instagram_profile_html_preserves_primary_metadata_without_signup_fallback(): void
     {
+        $user = [
+            'username' => 'kaifcodec', 'full_name' => 'Kaif Gram', 'pk' => '998877',
+            'profile_pic_url' => 'https://instagram.example/avatar.jpg',
+            'biography' => 'Building in public.', 'business_email' => 'kaif@example.com',
+            'external_url' => 'https://kaif.dev', 'fbid' => '112233',
+            'is_business_account' => true, 'is_joined_recently' => false,
+            'is_private' => false, 'is_verified' => true,
+            'edge_followed_by' => ['count' => 54321], 'edge_follow' => ['count' => 123],
+        ];
+        $html = '<html><head><meta property="og:title" content="Kaif Gram (@kaifcodec)">'
+            .'<meta property="og:image" content="https://instagram.example/avatar.jpg"></head><body>'
+            .'<script type="application/json">'.json_encode(['data' => ['xig_user_by_username' => $user]], JSON_THROW_ON_ERROR)
+            .'</script></body></html>';
         Http::fake([
-            '*' => Http::response([
-                'data' => [
-                    'user' => [
-                        'username' => 'kaifcodec',
-                        'full_name' => 'Kaif Gram',
-                        'id' => '998877',
-                        'profile_pic_url_hd' => 'https://instagram.example/avatar.jpg',
-                        'biography' => 'Building in public.',
-                        'business_email' => 'kaif@example.com',
-                        'external_url' => 'https://kaif.dev',
-                        'fbid' => '112233',
-                        'is_business_account' => true,
-                        'is_joined_recently' => false,
-                        'is_private' => false,
-                        'is_verified' => true,
-                        'edge_followed_by' => ['count' => 54321],
-                        'edge_follow' => ['count' => 123],
-                    ],
-                ],
-            ], 200, ['Content-Type' => 'application/json']),
+            'https://www.instagram.com/accounts/emailsignup/' => Http::response('', 200),
+            'https://www.instagram.com/kaifcodec/' => Http::response($html, 200, ['Content-Type' => 'text/html']),
         ]);
 
         $result = app(ScannerEngineService::class)->runPlannedValidator(
@@ -3239,8 +3213,11 @@ final class UsernameValidatorRegressionTest extends TestCase
         $this->assertSame(54321, $result->metadata['followers']);
         $this->assertSame(123, $result->metadata['following']);
         $this->assertContains('https://kaif.dev', $result->metadata['external_links']);
-        $this->assertContains('api_json', $result->metadata['sources']);
+        $this->assertContains('embedded_json', $result->metadata['sources']);
+        $this->assertContains('profile_html', $result->metadata['sources']);
         $this->assertSame(4, $result->metadata['observed_metadata_level']);
+        Http::assertSentCount(2);
+        Http::assertNotSent(static fn (Request $request): bool => $request->method() === 'POST');
     }
 
     public function test_soundcloud_profile_extracts_hydration_metadata(): void
@@ -4419,7 +4396,7 @@ final class UsernameValidatorRegressionTest extends TestCase
     public function test_threads_profile_url_includes_username(): void
     {
         $this->assertSame(
-            'https://www.threads.net/@zuck',
+            'https://www.threads.com/@zuck',
             (new ThreadsValidator())->publicProfileUrl('zuck')
         );
     }
@@ -4427,44 +4404,32 @@ final class UsernameValidatorRegressionTest extends TestCase
     public function test_threads_200_is_taken(): void
     {
         Http::fake([
-            '*' => Http::response(['data' => ['user' => ['username' => 'zuck']]], 200, ['Content-Type' => 'application/json']),
+            '*' => Http::response('<html><head><meta property="og:type" content="profile">'
+                .'<link rel="canonical" href="https://www.threads.com/@zuck"></head></html>', 200),
         ]);
 
         $this->assertSame('Taken', (new ThreadsValidator())->check('zuck')->status);
     }
 
-    public function test_threads_404_is_available(): void
+    public function test_threads_login_fallback_is_available(): void
     {
         Http::fake([
-            '*' => Http::response('<html><head><title>Page Not Found</title></head></html>', 404, ['Content-Type' => 'text/html']),
+            '*' => Http::response('<html><head><title>Threads • Log in</title></head></html>', 200, ['Content-Type' => 'text/html']),
         ]);
 
         $this->assertSame('Available', (new ThreadsValidator())->check('missing-user')->status);
     }
 
-    public function test_threads_api_profile_is_taken_and_preserves_primary_metadata(): void
+    public function test_threads_confirmed_html_profile_preserves_available_metadata(): void
     {
-        // Metadata is extracted from the web_profile_info API JSON directly, so
-        // enrichment does not depend on a second (rate-limit-prone) HTML fetch.
         Http::fake([
-            '*' => Http::response([
-                'data' => [
-                    'user' => [
-                        'username' => 'zuck',
-                        'full_name' => 'Mark Zuckerberg',
-                        'biography' => 'I build stuff',
-                        'is_verified' => true,
-                        'is_private' => false,
-                        'follower_count' => 1234567,
-                        'profile_pic_url' => 'https://scontent.cdninstagram.com/v/t51.2885-19/zuck.jpg',
-                        'id' => '314216',
-                        'bio_links' => [
-                            ['url' => 'https://www.threads.net/@zuck'],
-                            ['url' => 'https://example.com/zuck'],
-                        ],
-                    ],
-                ],
-            ], 200, ['Content-Type' => 'application/json']),
+            'https://www.threads.com/@zuck' => Http::response(
+                '<html><head><meta property="og:type" content="profile">'
+                .'<link rel="canonical" href="https://www.threads.com/@zuck">'
+                .'<meta property="og:title" content="Mark Zuckerberg (@zuck)">'
+                .'<meta property="og:description" content="I build stuff">'
+                .'<meta property="og:image" content="https://scontent.cdninstagram.com/v/t51.2885-19/zuck.jpg">'
+                .'</head></html>', 200, ['Content-Type' => 'text/html']),
         ]);
 
         $result = app(ScannerEngineService::class)->runPlannedValidator(
@@ -4475,17 +4440,84 @@ final class UsernameValidatorRegressionTest extends TestCase
         );
 
         $this->assertSame('Found', $result->status);
-        $this->assertSame('https://www.threads.net/@zuck', $result->profileUrl);
+        $this->assertSame('https://www.threads.com/@zuck', $result->profileUrl);
         $this->assertSame('zuck', $result->metadata['username']);
         $this->assertSame('Mark Zuckerberg', $result->metadata['display_name']);
         $this->assertSame('I build stuff', $result->metadata['bio']);
         $this->assertSame('https://scontent.cdninstagram.com/v/t51.2885-19/zuck.jpg', $result->metadata['avatar_url']);
-        $this->assertSame(1234567, $result->metadata['followers']);
-        $this->assertTrue((bool) $result->metadata['is_verified']);
-        $this->assertFalse((bool) $result->metadata['is_private']);
-        $this->assertSame('314216', $result->metadata['threads_user_id']);
-        $this->assertContains('https://example.com/zuck', $result->metadata['external_links']);
-        $this->assertContains('api_json', $result->metadata['sources']);
+        $this->assertContains('profile_html', $result->metadata['sources']);
+        // The HTML does not expose these fields. Do not invent API evidence.
+        foreach (['followers', 'is_verified', 'is_private', 'threads_user_id'] as $field) {
+            $this->assertNull($result->metadata[$field] ?? null);
+        }
+        Http::assertSentCount(1);
+        Http::assertSent(static fn (Request $request): bool => $request->url() === 'https://www.threads.com/@zuck'
+            && $request->hasHeader('Referer', 'https://www.threads.com/'));
+    }
+
+    #[DataProvider('unconfirmedProfileProvider')]
+    public function test_unconfirmed_profile_responses_do_not_become_account_verdicts(string $class, int $status, string $body): void
+    {
+        Http::fake(['*' => Http::response($body, $status)]);
+        $result = (new $class())->check('alice');
+        $this->assertSame('Error', $result->status);
+        $this->assertNotSame('', $result->reason);
+        $this->assertNull($result->profileUrl);
+    }
+
+    public static function unconfirmedProfileProvider(): array
+    {
+        return [
+            'academia generic 404' => [AcademiaValidator::class, 404, '<html>not found</html>'],
+            'deviantart generic 200' => [\App\Services\Scanner\Validators\Generated\User\DeviantartValidator::class, 200, 'profile ok'],
+            'sourceforge different user' => [\App\Services\Scanner\Validators\Generated\User\SourceforgeValidator::class, 200, '{"username":"bob","name":"Bob"}'],
+            'threads wrong canonical' => [ThreadsValidator::class, 200, '<meta property="og:type" content="profile"><link rel="canonical" href="https://www.threads.com/@bob">'],
+            'threads generic 200' => [ThreadsValidator::class, 200, '<html>profile ok</html>'],
+            'threads generic 404' => [ThreadsValidator::class, 404, '<title>Page Not Found</title>'],
+            'threads obsolete JSON' => [ThreadsValidator::class, 200, '{"data":{"user":{"username":"alice"}}}'],
+            'threads server failure with login template' => [ThreadsValidator::class, 500, '<title>Threads • Log in</title>'],
+        ];
+    }
+
+    public function test_instagram_embedded_different_user_cannot_overwrite_the_confirmed_profile(): void
+    {
+        Http::fake([
+            'https://www.instagram.com/accounts/emailsignup/' => Http::response('', 200),
+            'https://www.instagram.com/alice/' => Http::response(
+                '<meta property="og:title" content="Alice Owner (@alice)">'
+                .'<script type="application/json">{"xig_user_by_username":{"username":"bob","pk":"bob-id","full_name":"Bob","biography":"Other person","edge_followed_by":{"count":123}}}</script>', 200),
+        ]);
+        $result = (new \App\Services\Scanner\Validators\Generated\User\InstagramValidator())->check('alice');
+        $this->assertSame('Taken', $result->status);
+        $this->assertSame('Alice Owner', $result->metadata['display_name']);
+        foreach (['instagram_id', 'bio', 'followers'] as $field) {
+            $this->assertArrayNotHasKey($field, $result->metadata);
+        }
+        Http::assertSentCount(2);
+    }
+
+    public function test_reddit_available_handle_does_not_fetch_an_account_profile(): void
+    {
+        Http::fake([
+            'https://www.reddit.com/' => Http::response('<html>Reddit</html>', 200),
+            'https://www.reddit.com/api/username_available.json*' => Http::response('true', 200),
+        ]);
+        $result = (new RedditValidator())->check('alice');
+        $this->assertSame('Available', $result->status);
+        $this->assertNull($result->profileUrl);
+        Http::assertSentCount(2);
+        Http::assertNotSent(static fn (Request $request): bool => str_contains($request->url(), '/about.json'));
+    }
+
+    public function test_stackoverflow_search_requires_an_exact_display_name_match(): void
+    {
+        Http::fake(['https://api.stackexchange.com/2.3/users*' => Http::response(['items' => [
+            ['display_name' => 'alice-other', 'user_id' => 1, 'reputation' => 999],
+        ]], 200)]);
+        $result = (new \App\Services\Scanner\Validators\Generated\User\StackoverflowValidator())->check('alice');
+        $this->assertSame('Available', $result->status);
+        $this->assertNull($result->profileUrl);
+        $this->assertArrayNotHasKey('stackoverflow_user_id', $result->metadata);
     }
 
     public function test_daily_dev_payload_without_noindex_or_user_is_retryable_error(): void
@@ -4736,12 +4768,12 @@ final class UsernameValidatorRegressionTest extends TestCase
     }
 
     /**
-     * @return array<string, array{0:string,1:int,2:string}>
+     * @return array<string, array{0:string,1:int,2:string,3?:string}>
      */
     public static function generatedStatusValidatorProvider(): array
     {
         return [
-            'academia-404' => [AcademiaValidator::class, 404, 'Available'],
+            'academia-404' => [AcademiaValidator::class, 404, 'Available', '<html><title>Wrong aisle</title></html>'],
             'amazon-404' => [AmazonValidator::class, 404, 'Available'],
         ];
     }

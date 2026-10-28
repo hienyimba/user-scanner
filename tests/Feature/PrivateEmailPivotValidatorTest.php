@@ -488,6 +488,34 @@ final class PrivateEmailPivotValidatorTest extends TestCase
         $this->assertStringContainsString('No public Gravatar evidence', $result->reason);
     }
 
+    public function test_dropbox_registered_account_uses_only_the_csrf_account_check_and_labels_passkey_metadata(): void
+    {
+        Http::preventStrayRequests();
+        Http::fake(['*' => Http::sequence()
+            ->push('<html>Dropbox</html>', 200, ['Set-Cookie' => 't=synthetic-csrf; Path=/; Secure'])
+            ->push(['exists' => true, 'exists_as_recovery_email' => false, 'has_passkey' => true], 200)]);
+
+        $result = app(ScannerEngineService::class)->runPlannedValidator(
+            mode: 'email', validatorKey: 'dropbox', target: 'person@example.test',
+            options: ['enrich_metadata' => false],
+        );
+
+        $this->assertSame('Registered', $result->status);
+        $this->assertTrue($result->metadata['account_exists']);
+        $this->assertFalse($result->metadata['exists_as_recovery_email']);
+        $this->assertTrue($result->metadata['has_passkey']);
+        $this->assertSame(['has_passkey'], $result->metadata['sensitive_fields']);
+        $this->assertSame(['dropbox_csrf_cookie', 'dropbox_check_user_api', 'legacy_extra'], $result->metadata['sources']);
+        $this->assertFalse($result->metadata['safety_blocked'] ?? false);
+        $this->assertSame([
+            'https://www.dropbox.com',
+            'https://www.dropbox.com/2/account/check_user_with_email_exists',
+        ], Http::recorded()->map(static fn (array $exchange): string => $exchange[0]->url())->all());
+        Http::assertSent(static fn ($request): bool => $request->method() === 'POST'
+            && $request->hasHeader('X-CSRF-Token', 'synthetic-csrf')
+            && $request->data() === ['email' => 'person@example.test']);
+    }
+
     #[DataProvider('skippedValidatorProvider')]
     public function test_safety_blocked_email_validators_return_explicit_structured_skipped_status(
         string $validatorKey,
@@ -495,6 +523,7 @@ final class PrivateEmailPivotValidatorTest extends TestCase
         array $expectedSensitiveFields,
     ): void
     {
+        Http::fake();
         $result = app(ScannerEngineService::class)->runPlannedValidator(
             mode: 'email',
             validatorKey: $validatorKey,
@@ -515,6 +544,7 @@ final class PrivateEmailPivotValidatorTest extends TestCase
         $this->assertContains('safety_blocked', $result->metadata['evidence']);
         $this->assertContains('metadata_strategy', $result->metadata['evidence']);
         $this->assertSame([], $result->metadata['sources']);
+        Http::assertNothingSent();
     }
 
     /**
@@ -526,7 +556,6 @@ final class PrivateEmailPivotValidatorTest extends TestCase
             ['gmail', [], []],
             ['pandora', ['username', 'display_name', 'user_id', 'avatar_url', 'followers', 'following', 'posts_count', 'is_private', 'is_premium', 'playlist_count', 'stations'], []],
             ['typeform', ['display_name', 'is_verified', 'has_password', 'is_sso', 'needs_password_reset'], ['has_password', 'is_sso', 'needs_password_reset']],
-            ['dropbox', ['has_passkey'], ['has_passkey']],
             ['doordash', ['phones', 'social_channels'], ['phones', 'social_channels']],
             ['ripe', ['phones'], ['phones']],
         ];

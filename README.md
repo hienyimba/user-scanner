@@ -96,9 +96,11 @@ acceptance harnesses, and uploads their JSON and JUnit evidence even on failure.
 CI removes the repository's legacy vendored files before installing from
 `composer.lock`. Build production releases with a fresh dependency directory as
 well; checked-in Composer metadata is not evidence that package files exist.
-The 27 October migration report records 50 existing failing
-or erroring test names in the broader suite; the general PHPUnit jobs still run
-that complete suite and report its failures.
+The general PHPUnit jobs run all tracked Unit, Feature, BrowserTransport and
+ProxyCooldown tests. The fixtures cover current request flows, confirmed account
+evidence, malformed responses and ambiguous results; they do not treat every HTTP
+200 or password-policy rejection as an account verdict. Historical local reports
+can include ignored suites from retired implementations and have different counts.
 
 ## Metadata readiness
 - Normalized scanner results are exported with stable `status`, `profile_url`, `metadata`, `evidence`, and `confidence` fields.
