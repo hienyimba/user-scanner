@@ -166,6 +166,8 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    // Charter exits paused on 2026-11-03 after repeated HTTPS tunnel timeouts.
+    /*
     [
         'label' => 'us-8017',
         'entry_point' => 'disp.oxylabs.io',
@@ -177,6 +179,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
     [
         'label' => 'us-8016',
         'entry_point' => 'disp.oxylabs.io',
@@ -188,6 +191,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    /*
     [
         'label' => 'us-8015',
         'entry_point' => 'disp.oxylabs.io',
@@ -221,6 +225,7 @@ $structuredProxyPool = [
         'tier' => 'primary',
         'enabled' => true,
     ],
+    */
     [
         'label' => 'us-8012',
         'entry_point' => 'disp.oxylabs.io',
@@ -750,7 +755,7 @@ return [
             'module_cooldown_seconds' => (int) env('SCANNER_PROXY_MODULE_COOLDOWN_SECONDS', 300),
             'wait_timeout_seconds' => (int) env('SCANNER_PROXY_WAIT_TIMEOUT_SECONDS', 20),
             'wait_retry_seconds' => (int) env('SCANNER_PROXY_WAIT_RETRY_SECONDS', 2),
-            // Deliberate email retry geography. The pool is 56 U.S. and 4 UK
+            // Deliberate email retry geography. The pool is 52 U.S. and 4 UK
             // endpoints (2 UK primaries and both fallbacks UK); retries for
             // email modules prefer this country over the tier-only fallback.
             // Set to an empty value to disable the preference.
